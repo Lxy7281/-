@@ -1,61 +1,228 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 泊松过程交互式可视化应用
 =========================
 满足《概率论与随机过程》期中作业全部要求：
-  - 基本性质、叠加性、稀释性、客服中心应用
-  - 理论值与模拟值对比，学术严谨+交互友好
-  - 支持通过 Streamlit Print 导出为独立 HTML 文件
+  - 基本性质、叠加性、稀释性、客服中心应用（含 M/M/c 排队论）
+  - 理论值与模拟值对比，KS 检验，置信区间
+  - 学术严谨 + 交互友好 + 叙事性引导
 
 运行方法：
   pip install streamlit numpy plotly scipy pandas
   streamlit run app.py
-
-导出 HTML：
-  点击浏览器右上角 ⋮ → Print → 目标选择 "另存为 HTML"
 """
 
 import sys
 import os
 
-# Windows 终端 UTF-8 编码修复
+# ── Windows UTF-8 编码强制修复 ──
 if sys.platform == "win32":
-    try:
-        sys.stdout.reconfigure(encoding="utf-8")
-        sys.stderr.reconfigure(encoding="utf-8")
-    except Exception:
-        pass
+    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+    os.environ.setdefault("PYTHONUTF8", "1")
+    for stream_name in ("stdin", "stdout", "stderr"):
+        try:
+            getattr(sys, stream_name).reconfigure(encoding="utf-8")
+        except Exception:
+            pass
 
 import streamlit as st
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from scipy import stats
+from math import factorial, exp
 
 # ── 页面配置 ─────────────────────────────────────────────
 st.set_page_config(page_title="泊松过程交互式可视化", layout="wide")
 
+# ── 禁止浏览器自动翻译 + MathJax ──
+st.markdown("""
+<script>
+document.documentElement.classList.add('notranslate');
+document.documentElement.lang = 'zh-CN';
+</script>
+""", unsafe_allow_html=True)
+
 # ── 自定义 CSS ───────────────────────────────────────────
 st.markdown("""
 <style>
+    /* ===== 全局字体 (CJK 优先) ===== */
+    * {
+        font-family: 'Microsoft YaHei', 'PingFang SC', 'Hiragino Sans GB',
+                     'Noto Sans SC', 'Source Han Sans SC', 'SimHei', sans-serif !important;
+    }
+    code, pre, kbd, samp, .stCodeBlock, .stCodeBlock * {
+        font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas',
+                     'Microsoft YaHei', monospace !important;
+    }
+
+    /* ===== 首页 Hero ===== */
+    .hero-container {
+        background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 50%, #0f172a 100%);
+        border-radius: 16px;
+        padding: 48px 56px;
+        margin: 16px 0 32px 0;
+        color: #f1f5f9;
+        position: relative;
+        overflow: hidden;
+    }
+    .hero-container::before {
+        content: '';
+        position: absolute;
+        top: -50%; left: -50%;
+        width: 200%; height: 200%;
+        background: radial-gradient(circle at 30% 70%, rgba(59,130,246,0.12) 0%, transparent 50%),
+                    radial-gradient(circle at 70% 30%, rgba(139,92,246,0.10) 0%, transparent 50%);
+    }
+    .hero-title {
+        font-size: 2.6rem;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        margin-bottom: 12px;
+        position: relative;
+        background: linear-gradient(135deg, #93c5fd, #a5b4fc, #c4b5fd);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+    }
+    .hero-subtitle {
+        font-size: 1.05rem;
+        color: #94a3b8;
+        line-height: 1.7;
+        position: relative;
+        max-width: 720px;
+    }
+    .hero-badge {
+        display: inline-block;
+        background: rgba(59,130,246,0.18);
+        border: 1px solid rgba(59,130,246,0.3);
+        border-radius: 20px;
+        padding: 4px 14px;
+        font-size: 0.85rem;
+        color: #93c5fd;
+        margin-right: 8px;
+        margin-bottom: 8px;
+        position: relative;
+    }
+
+    /* ===== 理论/结论框 ===== */
     .theory-box {
-        background: linear-gradient(135deg, #e8f0fe 0%, #f3e8ff 100%);
-        border-left: 4px solid #667eea;
-        border-radius: 0 8px 8px 0;
-        padding: 16px 20px;
-        margin: 12px 0;
+        background: linear-gradient(135deg, #eff6ff 0%, #f5f3ff 100%);
+        border-left: 4px solid #3b82f6;
+        border-radius: 0 10px 10px 0;
+        padding: 18px 22px;
+        margin: 16px 0;
+        font-size: 0.93rem;
+        line-height: 1.75;
     }
     .conclusion-box {
         background: linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%);
         border-left: 4px solid #22c55e;
-        border-radius: 0 8px 8px 0;
-        padding: 16px 20px;
-        margin: 12px 0;
+        border-radius: 0 10px 10px 0;
+        padding: 18px 22px;
+        margin: 16px 0;
+        font-size: 0.93rem;
+        line-height: 1.75;
     }
+    .highlight-box {
+        background: linear-gradient(135deg, #fefce8 0%, #fff7ed 100%);
+        border-left: 4px solid #f59e0b;
+        border-radius: 0 10px 10px 0;
+        padding: 18px 22px;
+        margin: 16px 0;
+        font-size: 0.93rem;
+        line-height: 1.75;
+    }
+
+    /* ===== 指标卡片 ===== */
+    .metric-card {
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 20px 24px;
+        text-align: center;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+        transition: box-shadow 0.2s;
+    }
+    .metric-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
+    .metric-value {
+        font-size: 1.8rem;
+        font-weight: 700;
+        color: #1e293b;
+        line-height: 1.2;
+    }
+    .metric-label {
+        font-size: 0.82rem;
+        color: #64748b;
+        margin-top: 4px;
+    }
+    .metric-delta {
+        font-size: 0.8rem;
+        margin-top: 2px;
+    }
+
+    /* ===== 颜色标记 ===== */
     .metric-green  { color: #16a34a; font-weight: bold; }
     .metric-yellow { color: #d97706; font-weight: bold; }
     .metric-red    { color: #dc2626; font-weight: bold; }
+
+    /* ===== 流程步骤 ===== */
+    .step-row {
+        display: flex;
+        gap: 20px;
+        flex-wrap: wrap;
+        margin: 24px 0;
+    }
+    .step-card {
+        flex: 1;
+        min-width: 160px;
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 20px;
+        text-align: center;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+    .step-num {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 36px; height: 36px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, #3b82f6, #6366f1);
+        color: #fff;
+        font-weight: 700;
+        font-size: 1rem;
+        margin-bottom: 10px;
+    }
+    .step-title {
+        font-weight: 600;
+        font-size: 0.95rem;
+        color: #1e293b;
+        margin-bottom: 4px;
+    }
+    .step-desc {
+        font-size: 0.8rem;
+        color: #64748b;
+        line-height: 1.5;
+    }
+
+    /* ===== 图标字体修复：使用系统字体替代 Google Material Icons ===== */
+    [data-testid="stExpanderIcon"],
+    [class*="material-icons"],
+    [class*="material-symbols"] {
+        font-family: 'Microsoft YaHei', sans-serif !important;
+    }
+
+    /* ===== 响应式修复 ===== */
+    @media (max-width: 768px) {
+        .hero-container { padding: 28px 24px; }
+        .hero-title { font-size: 1.8rem; }
+        .step-row { flex-direction: column; }
+    }
 </style>
 """, unsafe_allow_html=True)
+
 
 # ============================================================
 # 工具函数
@@ -73,7 +240,7 @@ def generate_poisson_process(lam, T):
 
 
 def make_step_xy(arrival_times, T):
-    """将到达时刻转换为阶梯图的 (x, y) 坐标，用于 line_shape='hv'"""
+    """将到达时刻转换为阶梯图的 (x, y) 坐标"""
     x, y = [0.0], [0]
     for i, t in enumerate(arrival_times):
         x.extend([t, t])
@@ -94,7 +261,7 @@ def get_error_color(rel_error):
 
 
 def compute_r_squared(observed, expected):
-    """计算观测值与期望值的决定系数 R²"""
+    """R²"""
     ss_res = np.sum((observed - expected) ** 2)
     ss_tot = np.sum((observed - np.mean(observed)) ** 2)
     if ss_tot == 0:
@@ -103,7 +270,7 @@ def compute_r_squared(observed, expected):
 
 
 def format_error_html(sim_val, theory_val):
-    """生成带颜色标注的误差 HTML，返回 (html_str, rel_err)"""
+    """生成带颜色标注的误差 HTML"""
     if theory_val == 0:
         rel_err = abs(sim_val) if sim_val != 0 else 0
     else:
@@ -117,7 +284,7 @@ def format_error_html(sim_val, theory_val):
 
 
 def collect_interarrivals(lam, T, n_runs):
-    """多次生成泊松过程并汇总所有间隔时间，用于统计分析"""
+    """多次生成泊松过程并汇总所有间隔时间"""
     all_interarrivals = []
     for _ in range(n_runs):
         _, ia = generate_poisson_process(lam, T)
@@ -126,7 +293,7 @@ def collect_interarrivals(lam, T, n_runs):
 
 
 def plot_interarrival_histogram(interarrivals, lam, title="到达间隔时间分布"):
-    """绘制间隔时间直方图 + 理论指数分布 PDF，返回 (fig, R²)"""
+    """间隔时间直方图 + 理论指数分布 PDF，返回 (fig, R²)"""
     if len(interarrivals) < 5:
         return None, None
 
@@ -135,7 +302,7 @@ def plot_interarrival_histogram(interarrivals, lam, title="到达间隔时间分
     fig.add_trace(go.Histogram(
         x=interarrivals, histnorm='probability density',
         nbinsx=nbins,
-        name='模拟数据', marker_color='#2196F3', opacity=0.65,
+        name='模拟数据', marker_color='#3b82f6', opacity=0.65,
         hovertemplate='间隔: %{x:.3f}<br>密度: %{y:.4f}<extra></extra>'
     ))
 
@@ -145,7 +312,7 @@ def plot_interarrival_histogram(interarrivals, lam, title="到达间隔时间分
     fig.add_trace(go.Scatter(
         x=x_theory, y=pdf_theory, mode='lines',
         name=f'理论 Exp(λ={lam})',
-        line=dict(color='#F44336', width=2.5, dash='dash'),
+        line=dict(color='#ef4444', width=2.5, dash='dash'),
         hovertemplate='x: %{x:.3f}<br>f(x): %{y:.4f}<extra></extra>'
     ))
 
@@ -168,7 +335,7 @@ def plot_interarrival_histogram(interarrivals, lam, title="到达间隔时间分
 
 
 def show_error_table(results):
-    """显示理论值 vs 模拟值对比表格（带颜色标注）"""
+    """显示理论值 vs 模拟值对比表格"""
     cols = st.columns(4)
     cols[0].markdown("**指标**")
     cols[1].markdown("**理论值**")
@@ -186,6 +353,216 @@ def show_error_table(results):
         )
 
 
+def ks_test_exponential(data, lam):
+    """KS 检验：数据是否服从 Exp(λ) 分布。返回 (D值, p值, 结论文本)"""
+    if len(data) < 5:
+        return None, None, "样本过少，无法检验"
+    d_stat, p_value = stats.kstest(data, 'expon', args=(0, 1.0 / lam))
+    if p_value >= 0.05:
+        conclusion = f"p={p_value:.4f} >= 0.05，不拒绝 H0，数据与 Exp(λ={lam}) 无显著差异"
+        color = "#16a34a"
+    elif p_value >= 0.01:
+        conclusion = f"p={p_value:.4f} < 0.05，在 5% 水平拒绝 H0，差异显著"
+        color = "#d97706"
+    else:
+        conclusion = f"p={p_value:.4f} < 0.01，在 1% 水平拒绝 H0，差异高度显著"
+        color = "#dc2626"
+    return d_stat, p_value, f'<span style="color:{color}">{conclusion}</span>'
+
+
+def erlang_c(lam, mu, c):
+    """
+    Erlang C 公式
+    参数: lam = 到达率, mu = 服务率（每坐席）, c = 坐席数
+    返回: (P_wait, Lq, Wq, rho) - 等待概率、平均队长、平均等待时间、利用率
+    """
+    rho = lam / (c * mu)
+    if rho >= 1.0:
+        return 1.0, float('inf'), float('inf'), rho
+
+    a = lam / mu
+    sum_term = sum(a**k / factorial(k) for k in range(c))
+    last_term = (a**c / factorial(c)) * (1 / (1 - rho))
+    p0 = 1.0 / (sum_term + last_term)
+    p_wait = (a**c / factorial(c)) * (c / (c - a)) * p0
+
+    try:
+        lq = p_wait * rho / (1 - rho)
+        wq = lq / lam
+    except (ZeroDivisionError, OverflowError):
+        lq, wq = float('inf'), float('inf')
+
+    return p_wait, lq, wq, rho
+
+
+def simulate_mmc_queue(lam, mu, c, T):
+    """
+    离散事件模拟 M/M/c 排队系统
+    返回 dict: arrivals, waits, queue_len_over_time, system_len_over_time, 等
+    """
+    expected_n = max(int(lam * T * 1.5) + 100, 100)
+    interarrivals = np.random.exponential(1.0 / lam, size=expected_n)
+    arrival_times = np.cumsum(interarrivals)
+    mask = arrival_times < T
+    arrival_times = arrival_times[mask]
+    n_total = len(arrival_times)
+
+    empty_result = {
+        'arrivals': np.array([]), 'service_start': np.array([]),
+        'departures': np.array([]), 'waits': np.array([]),
+        'queue_len_over_time': ([0, T], [0, 0]),
+        'system_len_over_time': ([0, T], [0, 0]),
+        'n_total': 0, 'n_served': 0, 'avg_wait': 0, 'max_queue': 0,
+    }
+
+    if n_total == 0:
+        return empty_result
+
+    service_times = np.random.exponential(1.0 / mu, size=n_total)
+    service_start = np.zeros(n_total)
+    departures = np.zeros(n_total)
+    waits = np.zeros(n_total)
+    server_free_time = np.zeros(c)
+
+    for i in range(n_total):
+        at = arrival_times[i]
+        earliest_free = np.min(server_free_time)
+        assigned_server = np.argmin(server_free_time)
+        start_time = max(at, earliest_free)
+        service_start[i] = start_time
+        waits[i] = start_time - at
+        departures[i] = start_time + service_times[i]
+        server_free_time[assigned_server] = departures[i]
+
+    # 构建队列长度时间序列：扫描所有到达/离开事件
+    events = [(0.0, 0)]  # (time, net_delta: +1 for arrival, -1 for departure)
+    for i in range(n_total):
+        events.append((arrival_times[i], +1))
+        events.append((departures[i], -1))
+    events.append((T, 0))
+    events.sort(key=lambda x: x[0])
+
+    rec_t, rec_q, rec_s = [], [], []
+    n_in_system = 0
+    for et, delta in events:
+        rec_t.append(et)
+        n_in_system += delta
+        in_queue = max(0, n_in_system - c)
+        rec_q.append(in_queue)
+        rec_s.append(n_in_system)
+
+    # 去重同一时间点
+    seen = {}
+    for t_val, q_val, s_val in zip(rec_t, rec_q, rec_s):
+        seen[t_val] = (q_val, s_val)
+    rec_t = np.array(sorted(seen.keys()))
+    rec_q = np.array([seen[t][0] for t in rec_t])
+    rec_s = np.array([seen[t][1] for t in rec_t])
+
+    avg_wait = np.mean(waits)
+    max_queue = int(max(rec_q))
+
+    return {
+        'arrivals': arrival_times,
+        'service_start': service_start,
+        'departures': departures,
+        'waits': waits,
+        'queue_len_over_time': (rec_t, rec_q),
+        'system_len_over_time': (rec_t, rec_s),
+        'n_total': n_total,
+        'n_served': n_total,
+        'avg_wait': avg_wait,
+        'max_queue': max_queue,
+    }
+
+
+# ============================================================
+# 首页总览
+# ============================================================
+
+def render_tab_home():
+    st.markdown("""
+    <div class="hero-container">
+        <div class="hero-title">泊松过程交互式可视化</div>
+        <div class="hero-subtitle">
+            从数学定义出发，逐步探索泊松过程的<b>基本性质</b>、<b>叠加性</b>与<b>稀释性</b>，
+            最终在<b>客服中心排队系统</b>中实战应用 M/M/c 排队论 -
+            每个环节均可通过滑块、按钮实时操控参数，即时观察理论值与模拟值的对比。
+        </div>
+        <div style="margin-top:18px; position:relative;">
+            <span class="hero-badge">泊松过程</span>
+            <span class="hero-badge">指数分布</span>
+            <span class="hero-badge">M/M/c 排队论</span>
+            <span class="hero-badge">Erlang C</span>
+            <span class="hero-badge">离散事件模拟</span>
+            <span class="hero-badge">KS 检验</span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # 学习路径
+    st.markdown("### 探索路径")
+    st.markdown("""
+    <div class="step-row">
+        <div class="step-card">
+            <div class="step-num">1</div>
+            <div class="step-title">基本性质</div>
+            <div class="step-desc">理解泊松过程定义<br>验证到达间隔的指数分布<br>探究无记忆性</div>
+        </div>
+        <div class="step-card">
+            <div class="step-num">2</div>
+            <div class="step-title">叠加性</div>
+            <div class="step-desc">两条独立泊松流的合并<br>验证强度相加 入=入1+入2<br>排队论中多源合并的理论基础</div>
+        </div>
+        <div class="step-card">
+            <div class="step-num">3</div>
+            <div class="step-title">稀释性</div>
+            <div class="step-desc">Bernoulli 随机筛选<br>验证强度折减 入'=入p<br>理解丢包/过滤模型</div>
+        </div>
+        <div class="step-card">
+            <div class="step-num">4</div>
+            <div class="step-title">客服中心实战</div>
+            <div class="step-desc">多线路来电叠加<br>骚扰电话过滤<br>M/M/c 排队 + Erlang C<br>坐席资源优化</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # 关键概念速览
+    st.markdown("### 泊松过程速览")
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.markdown("""
+        <div class="theory-box">
+        <b>定义（四条公理）</b><br>
+        计数过程 {N(t), t >= 0} 称为强度为 入 的<em>泊松过程</em>，若：<br>
+        (1) N(0)=0<br>
+        (2) 独立增量：不重叠区间内的事件数独立<br>
+        (3) 平稳增量：分布仅依赖于区间长度<br>
+        (4) P(N(h)=1)=入h+o(h)，P(N(h)>=2)=o(h)
+        </div>
+        """, unsafe_allow_html=True)
+    with col_b:
+        st.markdown("""
+        <div class="conclusion-box">
+        <b>核心性质</b><br>
+        - N(t) ~ Poisson(入t)<br>
+        - E[N(t)] = Var[N(t)] = 入t<br>
+        - 到达间隔 Ti ~ Exp(入)，i.i.d.<br>
+        - 无记忆性：P(T>s+t | T>t)=P(T>s)<br>
+        - 叠加：独立泊松过程之和仍为泊松过程<br>
+        - 稀释：Bernoulli 筛选后仍为泊松过程
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("""
+    <div class="highlight-box">
+    <b>使用提示</b>：通过左侧控制面板调整参数，每个 Tab 页提供：
+    理论公式 → 样本路径可视化 → 统计分布验证 → 模拟与理论对比 → 问题思考与结论。<br>
+    <b>推荐先阅读每个 Tab 顶部的理论框</b>，理解数学背景后再动手实验。
+    </div>
+    """, unsafe_allow_html=True)
+
+
 # ============================================================
 # 标签页 1：泊松过程基本性质
 # ============================================================
@@ -193,21 +570,21 @@ def show_error_table(results):
 def render_tab_basic(lam, T, n_samples):
     st.markdown("## 泊松过程基本性质")
 
-    # 理论说明
     st.markdown(f"""
     <div class="theory-box">
-    <b>定义</b>：计数过程 $\\{{N(t), t \\geq 0\\}}$ 称为强度为 $\\lambda$ 的<em>泊松过程</em>，若满足：<br>
-    &emsp;① $N(0)=0$；&emsp;② 独立增量；&emsp;③ 平稳增量；
-    &emsp;④ $P(N(h)=1)=\\lambda h+o(h)$，$P(N(h)\\geq 2)=o(h)$。<br><br>
-    <b>物理意义</b>：$\\lambda={lam}$ 表示单位时间内事件发生的平均次数（强度）。
-    间隔时间独立同分布于指数分布 $\\text{{Exp}}(\\lambda={lam})$。
-    期望事件数 $E[N(t)]=\\lambda t={lam}t$，方差 $\\text{{Var}}[N(t)]=\\lambda t$。
+    <b>定义</b>：计数过程 {{N(t), t ≥ 0}} 称为强度为 λ 的<em>泊松过程</em>，若满足：<br>
+    ① N(0)=0；② 独立增量；③ 平稳增量；
+    ④ P(N(h)=1) = λh + o(h)，P(N(h) ≥ 2) = o(h)。<br><br>
+    <b>物理意义</b>：λ={lam} 表示单位时间内事件发生的平均次数（强度）。
+    间隔时间独立同分布于指数分布 Exp(λ={lam})。
+    期望事件数 E[N(t)] = λt = {lam}t，方差 Var[N(t)] = λt。
     </div>
-    """)
+    """, unsafe_allow_html=True)
 
-    # ── 区域 1：样本路径 ──
+    # ── 样本路径 ──
     st.markdown("### 样本路径可视化")
-    colors = ['#2196F3', '#E91E63', '#4CAF50']
+    st.markdown("以下展示泊松过程的三条独立样本路径，阶梯图的每次跳跃代表一个事件到达。")
+    colors = ['#3b82f6', '#ef4444', '#22c55e']
 
     arrivals_list = []
     for _ in range(3):
@@ -219,9 +596,9 @@ def render_tab_basic(lam, T, n_samples):
         sx, sy = make_step_xy(at, T)
         fig_paths.add_trace(go.Scatter(
             x=sx, y=sy, mode='lines',
-            name=f'路径 {i+1} (N(T)={len(at)}, λ̂={len(at)/T:.2f})',
+            name=f'路径 {i+1} (N(T)={len(at)}, lambda_hat={len(at)/T:.2f})',
             line=dict(color=colors[i], width=2.2, shape='hv'),
-            hovertemplate='t: %{{x:.2f}}<br>N(t): %{{y}}<extra></extra>'
+            hovertemplate='t: %{x:.2f}<br>N(t): %{y}<extra></extra>'
         ))
         if len(at) > 0:
             fig_paths.add_trace(go.Scatter(
@@ -229,11 +606,11 @@ def render_tab_basic(lam, T, n_samples):
                 mode='markers',
                 marker=dict(size=5, color=colors[i], line=dict(width=0)),
                 showlegend=False,
-                hovertemplate='到达时间: %{{x:.3f}}<br>事件编号: %{{y}}<extra></extra>'
+                hovertemplate='到达时间: %{x:.3f}<br>事件编号: %{y}<extra></extra>'
             ))
 
     fig_paths.update_layout(
-        title=dict(text=f"泊松过程样本路径 (λ={lam})", font=dict(size=16)),
+        title=dict(text=f"泊松过程样本路径 (lambda={lam})", font=dict(size=16)),
         xaxis_title=dict(text='时间 t', font=dict(size=14)),
         yaxis_title=dict(text='N(t)', font=dict(size=14)),
         template='plotly_white', hovermode='x unified',
@@ -244,43 +621,85 @@ def render_tab_basic(lam, T, n_samples):
     fig_paths.update_yaxes(showgrid=True, gridwidth=1, gridcolor='#f0f0f0')
     st.plotly_chart(fig_paths, use_container_width=True)
 
-    # ── 区域 2：间隔时间分析 ──
-    st.markdown("### 到达间隔时间分析")
+    # ── 增量分布 ──
+    st.markdown("### 固定区间内事件数的分布")
     n_runs = max(1, n_samples // 10)
+    counts_T = []
+    for _ in range(n_runs):
+        at, _ = generate_poisson_process(lam, T)
+        counts_T.append(len(at))
+    counts_T = np.array(counts_T)
+
+    fig_pois = go.Figure()
+    max_k = max(np.max(counts_T), 10)
+    k_range = np.arange(0, max_k + 1)
+    pmf_theory = stats.poisson.pmf(k_range, lam * T)
+    hist_k = np.bincount(counts_T, minlength=max_k + 1) / len(counts_T)
+
+    fig_pois.add_trace(go.Bar(
+        x=k_range, y=hist_k,
+        name=f'模拟 (n={n_runs}次)',
+        marker_color='#3b82f6', opacity=0.65,
+        hovertemplate='k: %{x}<br>频率: %{y:.4f}<extra></extra>'
+    ))
+    fig_pois.add_trace(go.Scatter(
+        x=k_range, y=pmf_theory, mode='markers+lines',
+        name=f'理论 Poisson(lambdaT={lam*T:.1f})',
+        marker=dict(color='#ef4444', size=6), line=dict(color='#ef4444', width=2, dash='dash'),
+        hovertemplate='k: %{x}<br>P(N(T)=k): %{y:.4f}<extra></extra>'
+    ))
+
+    fig_pois.update_layout(
+        title=dict(text=f"区间 [0,{T}] 内事件数分布 (理论 lambdaT={lam*T:.1f})", font=dict(size=16)),
+        xaxis_title=dict(text='事件数 k', font=dict(size=14)),
+        yaxis_title=dict(text='概率 / 频率', font=dict(size=14)),
+        template='plotly_white', hovermode='x unified',
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
+        margin=dict(l=40, r=20, t=50, b=40), bargap=0.15
+    )
+    fig_pois.update_xaxes(showgrid=True, gridwidth=1, gridcolor='#f0f0f0')
+    fig_pois.update_yaxes(showgrid=True, gridwidth=1, gridcolor='#f0f0f0')
+    st.plotly_chart(fig_pois, use_container_width=True)
+
+    # ── 间隔时间分析 ──
+    st.markdown("### 到达间隔时间分析")
     all_ia = collect_interarrivals(lam, T, n_runs)
     fig_hist, r2 = plot_interarrival_histogram(all_ia, lam,
-        title=f"到达间隔时间分布 (λ={lam}, 样本数={len(all_ia)})")
+        title=f"到达间隔时间分布 (lambda={lam}, 样本数={len(all_ia)})")
     if fig_hist is not None:
         st.plotly_chart(fig_hist, use_container_width=True)
 
+    # 统计指标 + KS 检验
     col_a, col_b, col_c = st.columns(3)
     sim_mean = np.mean(all_ia)
     theory_mean = 1.0 / lam
     html_err, rel_err = format_error_html(sim_mean, theory_mean)
     col_a.metric("模拟均值", f"{sim_mean:.4f}", f"理论 {theory_mean:.4f}")
-    col_b.metric("理论均值 1/λ", f"{theory_mean:.4f}")
-    col_c.markdown(
-        f"**相对误差** <span class='{get_error_color(rel_err)[1]}'>{rel_err:.2%}</span>",
-        unsafe_allow_html=True
-    )
-    if r2 is not None:
-        r2_color = get_error_color(max(0, 1 - r2))[0] if r2 < 0.99 else '#16a34a'
-        st.markdown(
-            f"**拟合优度 R²** = <span style='color:{r2_color};font-weight:bold'>{r2:.4f}</span>",
+    col_b.metric("理论均值 1/lambda", f"{theory_mean:.4f}")
+
+    d_stat, p_val, ks_conclusion = ks_test_exponential(all_ia, lam)
+    if d_stat is not None:
+        col_c.markdown(
+            f"**KS 检验**: D={d_stat:.4f}<br>{ks_conclusion}",
             unsafe_allow_html=True
         )
+        st.markdown(
+            f"**拟合优度 R^2** = {r2:.4f}  |  D={d_stat:.4f}, p={p_val:.4f}"
+            if r2 is not None else
+            f"**KS 检验**: D={d_stat:.4f}, p={p_val:.4f}"
+        )
 
-    # ── 区域 3：无记忆性验证 ──
+    # ── 无记忆性验证 ──
     st.markdown("### 无记忆性验证")
     st.markdown(
-        "指数分布的无记忆性：$P(X > s+t \\mid X > t) = P(X > s)$，"
-        "即给定已等待 $t_0$ 时间，剩余等待时间仍服从 $\\text{Exp}(\\lambda)$。"
+        "指数分布的无记忆性：P(X > s+t | X > t) = P(X > s)，"
+        "即给定已等待 t0 时间，剩余等待时间仍服从 Exp(lambda)。"
     )
 
-    col_t0, col_btn, _ = st.columns([1, 1, 3])
+    col_t0, _, _ = st.columns([1, 1, 3])
     with col_t0:
         t0 = st.number_input(
-            "条件时间 t₀", value=5.0, min_value=0.1, max_value=50.0, step=0.5,
+            "条件时间 t0", value=5.0, min_value=0.1, max_value=50.0, step=0.5,
             key="basic_t0"
         )
 
@@ -295,13 +714,13 @@ def render_tab_basic(lam, T, n_samples):
     fig_memory.add_trace(go.Histogram(
         x=X, histnorm='probability density', nbinsx=bins_mem,
         name=f'全部间隔时间 (n={n_verify})',
-        marker_color='#2196F3', opacity=0.55,
+        marker_color='#3b82f6', opacity=0.55,
         hovertemplate='间隔: %{x:.3f}<br>密度: %{y:.4f}<extra></extra>'
     ))
     fig_memory.add_trace(go.Histogram(
         x=remaining, histnorm='probability density', nbinsx=bins_mem,
-        name=f't₀={t0} 后剩余时间 (n={len(remaining)})',
-        marker_color='#FF9800', opacity=0.55,
+        name=f't0={t0} 后剩余时间 (n={len(remaining)})',
+        marker_color='#f59e0b', opacity=0.55,
         hovertemplate='剩余时间: %{x:.3f}<br>密度: %{y:.4f}<extra></extra>'
     ))
     x_max = max(np.max(X), np.max(remaining) if len(remaining) > 0 else 0) * 1.1
@@ -309,13 +728,13 @@ def render_tab_basic(lam, T, n_samples):
     pdf_theory = lam * np.exp(-lam * x_theory)
     fig_memory.add_trace(go.Scatter(
         x=x_theory, y=pdf_theory, mode='lines',
-        name=f'理论 Exp(λ={lam})',
-        line=dict(color='#F44336', width=2.5, dash='dash'),
+        name=f'理论 Exp(lambda={lam})',
+        line=dict(color='#ef4444', width=2.5, dash='dash'),
         hovertemplate='x: %{x:.3f}<br>f(x): %{y:.4f}<extra></extra>'
     ))
 
     fig_memory.update_layout(
-        title=dict(text=f"无记忆性验证 (λ={lam}, t₀={t0})", font=dict(size=16)),
+        title=dict(text=f"无记忆性验证 (lambda={lam}, t0={t0})", font=dict(size=16)),
         xaxis_title=dict(text='间隔时间', font=dict(size=14)),
         yaxis_title=dict(text='概率密度', font=dict(size=14)),
         template='plotly_white', hovermode='x unified',
@@ -330,21 +749,21 @@ def render_tab_basic(lam, T, n_samples):
     c1, c2 = st.columns(2)
     mean_all = np.mean(X)
     mean_rem = np.mean(remaining) if len(remaining) > 0 else 0
-    c1.metric("全部间隔时间均值", f"{mean_all:.4f}", f"理论 1/λ={theory_mean:.4f}")
-    c2.metric("t₀ 后剩余时间均值", f"{mean_rem:.4f}", f"理论 1/λ={theory_mean:.4f}")
+    c1.metric("全部间隔时间均值", f"{mean_all:.4f}", f"理论 1/lambda={theory_mean:.4f}")
+    c2.metric("t0 后剩余时间均值", f"{mean_rem:.4f}", f"理论 1/lambda={theory_mean:.4f}")
     diff = abs(mean_all - mean_rem)
     st.markdown(f"**两均值之差的绝对值** = {diff:.4f}（越小越验证无记忆性）")
 
-    # ── 问题思考与结论 ──
     st.markdown("""
     <div class="conclusion-box">
-    <b>📝 问题思考与结论</b><br>
-    ① <b>到达间隔为何服从指数分布？</b> 由泊松过程平稳独立增量性质可推导间隔时间 $T_i$ 满足
-    $P(T_1 > t) = P(N(t)=0) = e^{-\\lambda t}$，故 $T_i \\sim \\text{Exp}(\\lambda)$。<br>
-    ② <b>无记忆性的实际意义：</b> 无论系统已运行多久，下一事件的等待时间分布始终不变，这简化了排队系统的分析。<br>
-    ③ <b>样本路径特征：</b> 观察阶梯图可知 $N(t)$ 单调不减、跃度恒为 1（几乎处处），符合泊松过程定义。
+    <b>问题思考与结论</b><br>
+    ① <b>到达间隔为何服从指数分布？</b> 由泊松过程平稳独立增量性质可推导间隔时间 T_i 满足
+    P(T_1 > t) = P(N(t)=0) = e^{-lambda t}，故 T_i ~ Exp(lambda)。<br>
+    ② <b>KS 检验的意义：</b>KS 统计量 D 衡量经验分布与理论分布的最大偏差，p 值越大说明拟合越好。<br>
+    ③ <b>无记忆性的实际意义：</b> 无论系统已运行多久，下一事件的等待时间分布始终不变，这简化了排队系统的分析。<br>
+    ④ <b>样本路径特征：</b> 观察阶梯图可知 N(t) 单调不减、跃度恒为 1（几乎处处），符合泊松过程定义。
     </div>
-    """)
+    """, unsafe_allow_html=True)
 
 
 # ============================================================
@@ -356,37 +775,35 @@ def render_tab_superposition(lam1, lam2, T_sup):
 
     st.markdown(f"""
     <div class="theory-box">
-    <b>叠加定理</b>：设 $\\{{N_1(t)\\}}$ 和 $\\{{N_2(t)\\}}$ 为两个<em>独立</em>的泊松过程，
-    强度分别为 $\\lambda_1={lam1}, \\lambda_2={lam2}$，
-    则叠加过程 $\\{{N(t) = N_1(t) + N_2(t)\\}}$ 仍为泊松过程，强度为
-    $\\lambda = \\lambda_1 + \\lambda_2 = {lam1+lam2}$。<br>
+    <b>叠加定理</b>：设 N1(t) 和 N2(t) 为两个<em>独立</em>的泊松过程，
+    强度分别为 lambda_1={lam1}, lambda_2={lam2}，
+    则叠加过程 N(t) = N1(t) + N2(t) 仍为泊松过程，强度为
+    lambda = lambda_1 + lambda_2 = {lam1+lam2}。<br>
     <b>物理意义</b>：多条独立泊松事件流的合并仍为泊松流，强度为各分流强度之和。
     这是排队论中多源输入合并的理论基础。
     </div>
-    """)
+    """, unsafe_allow_html=True)
 
-    # 生成三个过程的样本路径
     arrivals1, _ = generate_poisson_process(lam1, T_sup)
     arrivals2, _ = generate_poisson_process(lam2, T_sup)
     arrivals_super = np.sort(np.concatenate([arrivals1, arrivals2]))
 
-    # ── 三图对比 ──
     st.markdown("### 过程对比")
 
     fig_super = make_subplots(
         rows=3, cols=1, shared_xaxes=True,
         vertical_spacing=0.08,
         subplot_titles=(
-            f'过程 1 (λ₁={lam1})，事件数={len(arrivals1)}',
-            f'过程 2 (λ₂={lam2})，事件数={len(arrivals2)}',
-            f'叠加过程 (λ₁+λ₂={lam1+lam2})，事件数={len(arrivals_super)}'
+            f'过程 1 (lambda_1={lam1})，事件数={len(arrivals1)}',
+            f'过程 2 (lambda_2={lam2})，事件数={len(arrivals2)}',
+            f'叠加过程 (lambda_1+lambda_2={lam1+lam2})，事件数={len(arrivals_super)}'
         )
     )
 
     data_sets = [
-        (arrivals1, '#2196F3', '过程 1'),
-        (arrivals2, '#E91E63', '过程 2'),
-        (arrivals_super, '#4CAF50', '叠加过程'),
+        (arrivals1, '#3b82f6', '过程 1'),
+        (arrivals2, '#ef4444', '过程 2'),
+        (arrivals_super, '#22c55e', '叠加过程'),
     ]
 
     for row, (at, color, name) in enumerate(data_sets, start=1):
@@ -399,8 +816,8 @@ def render_tab_superposition(lam1, lam2, T_sup):
         ), row=row, col=1)
 
     fig_super.update_xaxes(title_text='时间 t', row=3, col=1)
-    fig_super.update_yaxes(title_text='N₁(t)', row=1, col=1)
-    fig_super.update_yaxes(title_text='N₂(t)', row=2, col=1)
+    fig_super.update_yaxes(title_text='N1(t)', row=1, col=1)
+    fig_super.update_yaxes(title_text='N2(t)', row=2, col=1)
     fig_super.update_yaxes(title_text='N(t)', row=3, col=1)
     fig_super.update_layout(
         height=650, template='plotly_white', hovermode='x unified',
@@ -412,9 +829,8 @@ def render_tab_superposition(lam1, lam2, T_sup):
         fig_super.update_yaxes(showgrid=True, gridwidth=1, gridcolor='#f0f0f0', row=i, col=1)
     st.plotly_chart(fig_super, use_container_width=True)
 
-    # ── 结果验证表格 ──
+    # 结果验证表格
     st.markdown("### 理论值与模拟值对比")
-
     est_lam1 = len(arrivals1) / T_sup
     est_lam2 = len(arrivals2) / T_sup
     est_lam_super = len(arrivals_super) / T_sup
@@ -426,36 +842,76 @@ def render_tab_superposition(lam1, lam2, T_sup):
     ]
     show_error_table(results)
 
-    # ── 间隔分布验证 ──
-    st.markdown("### 叠加过程间隔分布验证")
-    if st.button("分析叠加过程间隔分布", key="sup_analyze_btn"):
+    # 叠加过程统计验证
+    st.markdown("### 叠加过程事件数分布验证")
+    if st.button("分析叠加过程统计特性", key="sup_analyze_btn"):
+        n_sup_runs = 500
+        sup_counts = []
+        for _ in range(n_sup_runs):
+            a1, _ = generate_poisson_process(lam1, T_sup)
+            a2, _ = generate_poisson_process(lam2, T_sup)
+            sup_counts.append(len(a1) + len(a2))
+        sup_counts = np.array(sup_counts)
+
+        theory_lam = lam1 + lam2
+        max_k = max(int(theory_lam * T_sup * 2), np.max(sup_counts), 10)
+        k_range = np.arange(0, max_k + 1)
+
+        hist_sup = np.bincount(sup_counts, minlength=max_k + 1)[:max_k + 1] / n_sup_runs
+        pmf_theory = stats.poisson.pmf(k_range, theory_lam * T_sup)
+
+        fig_sup_dist = go.Figure()
+        fig_sup_dist.add_trace(go.Bar(
+            x=k_range, y=hist_sup,
+            name=f'模拟 (n={n_sup_runs})',
+            marker_color='#3b82f6', opacity=0.65,
+            hovertemplate='k: %{x}<br>频率: %{y:.4f}<extra></extra>'
+        ))
+        fig_sup_dist.add_trace(go.Scatter(
+            x=k_range, y=pmf_theory, mode='markers+lines',
+            name=f'理论 Poisson({theory_lam*T_sup:.1f})',
+            marker=dict(color='#ef4444', size=6), line=dict(color='#ef4444', width=2, dash='dash'),
+            hovertemplate='k: %{x}<br>P: %{y:.4f}<extra></extra>'
+        ))
+        fig_sup_dist.update_layout(
+            title=dict(text=f"叠加过程事件数分布 vs Poisson({theory_lam*T_sup:.1f})", font=dict(size=16)),
+            xaxis_title=dict(text='事件数 k', font=dict(size=14)),
+            yaxis_title=dict(text='概率 / 频率', font=dict(size=14)),
+            template='plotly_white', hovermode='x unified',
+            legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
+            margin=dict(l=40, r=20, t=50, b=40), bargap=0.15
+        )
+        st.plotly_chart(fig_sup_dist, use_container_width=True)
+
+        # 卡方拟合优度
+        valid_k = np.bincount(sup_counts)
+        valid_k = valid_k[valid_k > 0]
+        if len(valid_k) >= 3 and len(valid_k) <= len(pmf_theory):
+            chi2, p_chi2 = stats.chisquare(valid_k, pmf_theory[:len(valid_k)] * n_sup_runs)
+            if chi2 is not None:
+                st.markdown(f"**卡方拟合优度检验**: chi^2={chi2:.2f}, p={p_chi2:.4f}")
+
         super_ia = np.diff(arrivals_super)
         if len(super_ia) >= 5:
             fig_sia, r2_s = plot_interarrival_histogram(
                 super_ia, lam1 + lam2,
-                title=f"叠加过程间隔分布 (理论 Exp(λ={lam1+lam2}))"
+                title=f"叠加过程间隔分布 (理论 Exp(lambda={lam1+lam2}))"
             )
             if fig_sia is not None:
                 st.plotly_chart(fig_sia, use_container_width=True)
             html_err, _ = format_error_html(np.mean(super_ia), 1.0 / (lam1 + lam2))
             st.markdown(f"叠加间隔均值: {html_err}", unsafe_allow_html=True)
-            if r2_s is not None:
-                st.markdown(f"**拟合优度 R²** = {r2_s:.4f}")
-        else:
-            st.warning("叠加事件数过少，请增大 λ 或时间范围。")
 
-    # ── 思考与结论 ──
     st.markdown(f"""
     <div class="conclusion-box">
-    <b>📝 问题思考与结论</b><br>
-    ① <b>叠加后为何仍是泊松过程？</b> 两个独立泊松过程的特征函数相乘仍为泊松过程的特征函数，参数相加。
-    直观理解：独立稀有事件流的合并仍为稀有事件流，强度自然叠加。<br>
-    ② <b>λ₁={lam1}, λ₂={lam2}</b> 叠加后 <b>λ={lam1+lam2}</b>，
-    事件数期望从 λ₁T={lam1*T_sup:.1f} 和 λ₂T={lam2*T_sup:.1f}
-    增至 (λ₁+λ₂)T={(lam1+lam2)*T_sup:.1f}。<br>
+    <b>问题思考与结论</b><br>
+    ① <b>叠加后为何仍是泊松过程？</b> 两个独立泊松过程的特征函数相乘仍为泊松过程的特征函数，参数相加。<br>
+    ② lambda_1={lam1}, lambda_2={lam2} 叠加后 lambda={lam1+lam2}，
+    事件数期望从 lambda_1*T={lam1*T_sup:.1f} 和 lambda_2*T={lam2*T_sup:.1f}
+    增至 (lambda_1+lambda_2)T={(lam1+lam2)*T_sup:.1f}。<br>
     ③ <b>应用：</b> 通信网络中多用户数据包到达、客服中心多线路来电均可建模为独立泊松过程的叠加。
     </div>
-    """)
+    """, unsafe_allow_html=True)
 
 
 # ============================================================
@@ -467,12 +923,12 @@ def render_tab_thinning(lam, p, T_thin):
 
     st.markdown(f"""
     <div class="theory-box">
-    <b>稀释定理</b>：设 $\\{{N(t)\\}}$ 是强度为 $\\lambda={lam}$ 的泊松过程。
-    若每个事件以概率 $p={p}$ 被<em>独立保留</em>，以概率 $1-p={1-p:.2f}$ 被丢弃，
-    则保留事件构成的计数过程 $\\{{N_p(t)\\}}$ 仍为泊松过程，强度为 $\\lambda p = {lam*p:.2f}$。<br>
+    <b>稀释定理</b>：设 N(t) 是强度为 lambda={lam} 的泊松过程。
+    若每个事件以概率 p={p} 被<em>独立保留</em>，以概率 1-p={1-p:.2f} 被丢弃，
+    则保留事件构成的计数过程 N_p(t) 仍为泊松过程，强度为 lambda*p = {lam*p:.2f}。<br>
     <b>物理意义</b>：对泊松事件流进行独立的随机筛选，筛选后的流仍为泊松流，强度按筛选比折减。
     </div>
-    """)
+    """, unsafe_allow_html=True)
 
     arrivals, _ = generate_poisson_process(lam, T_thin)
 
@@ -484,39 +940,36 @@ def render_tab_thinning(lam, p, T_thin):
         retained = np.array([])
         discarded = np.array([])
 
-    # ── 两图对比 ──
     st.markdown("### 原始过程与稀释过程对比")
 
     fig_thin = make_subplots(
         rows=2, cols=1, shared_xaxes=True,
         vertical_spacing=0.1,
         subplot_titles=(
-            f'原始泊松过程 (λ={lam})，总事件数={len(arrivals)}',
-            f'稀释后过程 (p={p}, λp={lam*p:.2f})，保留={len(retained)}，丢弃={len(discarded)}'
+            f'原始泊松过程 (lambda={lam})，总事件数={len(arrivals)}',
+            f'稀释后过程 (p={p}, lambda*p={lam*p:.2f})，保留={len(retained)}，丢弃={len(discarded)}'
         )
     )
 
-    # 上图：原始过程
     ox, oy = make_step_xy(arrivals, T_thin)
     fig_thin.add_trace(go.Scatter(
         x=ox, y=oy, mode='lines', name='原始过程',
-        line=dict(color='#2196F3', width=2.2, shape='hv'),
+        line=dict(color='#3b82f6', width=2.2, shape='hv'),
         hovertemplate='t: %{x:.2f}<br>N(t): %{y}<extra></extra>'
     ), row=1, col=1)
     if len(arrivals) > 0:
         fig_thin.add_trace(go.Scatter(
             x=arrivals, y=list(range(1, len(arrivals) + 1)),
             mode='markers',
-            marker=dict(size=5, color='#2196F3', line=dict(width=0)),
+            marker=dict(size=5, color='#3b82f6', line=dict(width=0)),
             showlegend=False,
             hovertemplate='到达: %{x:.3f}<br>事件#: %{y}<extra></extra>'
         ), row=1, col=1)
 
-    # 下图：稀释后（保留 + 丢弃用不同颜色标记）
     rx, ry = make_step_xy(retained, T_thin) if len(retained) > 0 else ([0, T_thin], [0, 0])
     fig_thin.add_trace(go.Scatter(
         x=rx, y=ry, mode='lines', name='稀释后过程 (仅保留)',
-        line=dict(color='#4CAF50', width=2.5, shape='hv'),
+        line=dict(color='#22c55e', width=2.5, shape='hv'),
         hovertemplate='t: %{x:.2f}<br>N_p(t): %{y}<extra></extra>'
     ), row=2, col=1)
 
@@ -524,7 +977,7 @@ def render_tab_thinning(lam, p, T_thin):
         fig_thin.add_trace(go.Scatter(
             x=retained, y=list(range(1, len(retained) + 1)),
             mode='markers',
-            marker=dict(size=6, color='#4CAF50', symbol='circle', line=dict(width=0)),
+            marker=dict(size=6, color='#22c55e', symbol='circle', line=dict(width=0)),
             name='保留事件',
             hovertemplate='保留: %{x:.3f}<br>事件#: %{y}<extra></extra>'
         ), row=2, col=1)
@@ -534,7 +987,7 @@ def render_tab_thinning(lam, p, T_thin):
         fig_thin.add_trace(go.Scatter(
             x=discarded, y=disc_y,
             mode='markers',
-            marker=dict(size=7, color='#F44336', symbol='x', line=dict(width=1.5)),
+            marker=dict(size=7, color='#ef4444', symbol='x', line=dict(width=1.5)),
             name='丢弃事件',
             hovertemplate='丢弃: %{x:.3f}<extra></extra>'
         ), row=2, col=1)
@@ -544,7 +997,7 @@ def render_tab_thinning(lam, p, T_thin):
     fig_thin.update_yaxes(title_text='N_p(t)', row=2, col=1)
     fig_thin.update_layout(
         height=600, template='plotly_white', hovermode='x unified',
-        title=dict(text=f"泊松过程稀释 (λ={lam}, p={p})", font=dict(size=16)),
+        title=dict(text=f"泊松过程稀释 (lambda={lam}, p={p})", font=dict(size=16)),
         margin=dict(l=40, r=20, t=50, b=40)
     )
     for i in range(1, 3):
@@ -552,9 +1005,7 @@ def render_tab_thinning(lam, p, T_thin):
         fig_thin.update_yaxes(showgrid=True, gridwidth=1, gridcolor='#f0f0f0', row=i, col=1)
     st.plotly_chart(fig_thin, use_container_width=True)
 
-    # ── 结果验证表格 ──
     st.markdown("### 理论值与模拟值对比")
-
     actual_ratio = len(retained) / len(arrivals) if len(arrivals) > 0 else 0
     results = [
         ("原始事件数", lam * T_thin, len(arrivals)),
@@ -563,71 +1014,126 @@ def render_tab_thinning(lam, p, T_thin):
     ]
     show_error_table(results)
 
-    # ── 间隔分布验证 ──
+    # 多 p 值对比
+    st.markdown("### 不同稀释概率 p 的效果对比")
+    if st.button("生成多 p 值对比", key="thin_multip_btn"):
+        p_values = [0.2, 0.4, 0.6, 0.8]
+        n_multi = 200
+        fig_multi = go.Figure()
+        p_results = []
+
+        for p_i in p_values:
+            retained_counts = []
+            for _ in range(n_multi):
+                at_full, _ = generate_poisson_process(lam, T_thin)
+                retained_counts.append(np.sum(np.random.random(len(at_full)) < p_i))
+            avg_retained = np.mean(retained_counts)
+            theory_val = lam * p_i * T_thin
+            p_results.append((p_i, avg_retained, theory_val))
+
+        p_vals = [r[0] for r in p_results]
+        sim_vals = [r[1] for r in p_results]
+        theory_vals = [r[2] for r in p_results]
+
+        fig_multi.add_trace(go.Bar(
+            x=p_vals, y=sim_vals, name='模拟值 (200次平均)',
+            marker_color='#3b82f6', opacity=0.7,
+            text=[f'{v:.2f}' for v in sim_vals], textposition='outside',
+            hovertemplate='p: %{x}<br>模拟事件数: %{y:.2f}<extra></extra>'
+        ))
+        fig_multi.add_trace(go.Scatter(
+            x=p_vals, y=theory_vals, mode='markers+lines',
+            name='理论值 lambda*p*T',
+            marker=dict(color='#ef4444', size=10), line=dict(color='#ef4444', width=2, dash='dash'),
+            hovertemplate='p: %{x}<br>理论事件数: %{y:.1f}<extra></extra>'
+        ))
+        fig_multi.update_layout(
+            title=dict(text=f"不同 p 值下稀释后事件数 (lambda={lam}, T={T_thin})", font=dict(size=16)),
+            xaxis_title=dict(text='稀释概率 p', font=dict(size=14)),
+            yaxis_title=dict(text='平均事件数', font=dict(size=14)),
+            template='plotly_white', hovermode='x unified',
+            legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
+            margin=dict(l=40, r=20, t=50, b=40)
+        )
+        st.plotly_chart(fig_multi, use_container_width=True)
+
+        for p_i, sim_v, theory_v in p_results:
+            _, rel = format_error_html(sim_v, theory_v)
+            color_cls = get_error_color(rel)[1]
+            st.markdown(
+                f"p={p_i}：模拟 {sim_v:.2f} vs 理论 {theory_v:.2f}，"
+                f"误差 <span class='{color_cls}'>{rel:.2%}</span>",
+                unsafe_allow_html=True
+            )
+
     st.markdown("### 稀释过程间隔分布验证")
     if st.button("分析稀释过程间隔分布", key="thin_analyze_btn"):
         if len(retained) >= 5:
             thin_ia = np.diff(retained)
             fig_tia, r2_t = plot_interarrival_histogram(
                 thin_ia, lam * p,
-                title=f"稀释后间隔分布 (理论 Exp(λp={lam*p:.2f}))"
+                title=f"稀释后间隔分布 (理论 Exp(lambda*p={lam*p:.2f}))"
             )
             if fig_tia is not None:
                 st.plotly_chart(fig_tia, use_container_width=True)
             html_err, _ = format_error_html(np.mean(thin_ia), 1.0 / (lam * p))
             st.markdown(f"稀释间隔均值: {html_err}", unsafe_allow_html=True)
             if r2_t is not None:
-                st.markdown(f"**拟合优度 R²** = {r2_t:.4f}")
-        else:
-            st.warning("保留事件数过少，请增大 p 或 λ。")
+                st.markdown(f"**拟合优度 R^2** = {r2_t:.4f}")
 
-    # ── 思考与结论 ──
+            d_stat, p_val, ks_conc = ks_test_exponential(thin_ia, lam * p)
+            if d_stat is not None:
+                st.markdown(f"**KS 检验**: D={d_stat:.4f}, {ks_conc}", unsafe_allow_html=True)
+        else:
+            st.warning("保留事件数过少，请增大 p 或 lambda。")
+
     st.markdown(f"""
     <div class="conclusion-box">
-    <b>📝 问题思考与结论</b><br>
+    <b>问题思考与结论</b><br>
     ① <b>稀释后为何仍是泊松过程？</b> 每个事件独立以概率 p 保留，等价于对泊松过程作 Bernoulli 稀释。
-    可证稀释后的计数过程满足泊松过程四条公理，强度为 λp。增量分布为 Poisson(λpt)。<br>
-    ② <b>λ={lam}, p={p}</b> 时有效强度 <b>λp={lam*p:.2f}</b>，
-    事件数期望从 λT={lam*T_thin:.1f} 降至 λpT={lam*p*T_thin:.1f}。<br>
+    可证稀释后的计数过程满足泊松过程四条公理，强度为 lambda*p。增量分布为 Poisson(lambda*p*t)。<br>
+    ② lambda={lam}, p={p} 时有效强度 lambda*p={lam*p:.2f}，
+    事件数期望从 lambda*T={lam*T_thin:.1f} 降至 lambda*p*T={lam*p*T_thin:.1f}。<br>
     ③ <b>应用：</b> 网络数据包随机丢包模型、保险理赔中实际赔付的建模、客服中心骚扰电话过滤等。
     </div>
-    """)
+    """, unsafe_allow_html=True)
 
 
 # ============================================================
-# 标签页 4：客服中心实际应用
+# 标签页 4：客服中心实际应用（含 M/M/c 排队论）
 # ============================================================
 
-def render_tab_call_center(shift, n_lines, spam_ratio):
-    st.markdown("## 客服中心实际应用")
+def render_tab_call_center(shift, n_lines, spam_ratio, n_agents, mu_service, T_shift_override):
+    st.markdown("## 客服中心排队系统模拟")
 
     st.markdown("""
     <div class="theory-box">
-    <b>应用背景</b>：客服中心电话接入符合泊松过程的原因——<br>
-    &emsp;① 大量独立客户各自独立决定拨打；<br>
-    &emsp;② 每个客户在短时间内的拨打概率很小（稀有事件）；<br>
-    &emsp;③ 满足平稳独立增量假设。<br>
-    利用泊松过程的<em>叠加性</em>（多线路合并）和<em>稀释性</em>（骚扰过滤）可有效建模和优化客服资源配置。
+    <b>应用背景</b>：客服中心电话接入符合泊松过程的原因-<br>
+    ① 大量独立客户各自独立决定拨打；<br>
+    ② 每个客户在短时间内的拨打概率很小（稀有事件）；<br>
+    ③ 满足平稳独立增量假设。<br>
+    利用泊松过程的<em>叠加性</em>（多线路合并）、<em>稀释性</em>（骚扰过滤）和<em>M/M/c 排队论</em>（Erlang C 公式）
+    可有效建模和优化客服资源配置。
     </div>
-    """)
+    """, unsafe_allow_html=True)
 
     shift_map = {
-        '早班(9-12点, λ=2)':    (2.0, 3),
-        '午班(12-18点, λ=3.5)': (3.5, 6),
-        '晚班(18-24点, λ=1.5)': (1.5, 6),
+        '早班(9-12点, lambda=2)':    (2.0, 3),
+        '午班(12-18点, lambda=3.5)': (3.5, 6),
+        '晚班(18-24点, lambda=1.5)': (1.5, 6),
     }
     lam_per_line, T_shift = shift_map[shift]
 
-    # 生成各线路的独立泊松过程
+    if T_shift_override is not None:
+        T_shift = T_shift_override
+
     line_arrivals = []
     for _ in range(n_lines):
         at, _ = generate_poisson_process(lam_per_line, T_shift)
         line_arrivals.append(at)
 
-    # 叠加：总来电
     all_arrivals = np.sort(np.concatenate(line_arrivals)) if line_arrivals else np.array([])
 
-    # 稀释：过滤骚扰电话
     if len(all_arrivals) > 0:
         valid_mask = np.random.random(len(all_arrivals)) >= spam_ratio
         valid_arrivals = all_arrivals[valid_mask]
@@ -639,17 +1145,17 @@ def render_tab_call_center(shift, n_lines, spam_ratio):
     total_lam = n_lines * lam_per_line
     effective_lam = total_lam * (1 - spam_ratio)
 
-    # ── 总进线过程 ──
-    st.markdown("### 总进线过程模拟")
+    # ── 1. 总进线过程 ──
+    st.markdown("### 第一步：多线路来电叠加（叠加性应用）")
 
     fig_cc1 = go.Figure()
-    line_colors = ['#90CAF9', '#A5D6A7', '#FFCC80', '#CE93D8', '#80CBC4']
+    line_colors = ['#93c5fd', '#86efac', '#fcd34d', '#c4b5fd', '#67e8f9']
 
     for i, at in enumerate(line_arrivals):
         sx, sy = make_step_xy(at, T_shift)
         fig_cc1.add_trace(go.Scatter(
             x=sx, y=sy, mode='lines',
-            name=f'线路 {i+1} (λ={lam_per_line}, 来电={len(at)})',
+            name=f'线路 {i+1} (lambda={lam_per_line}, 来电={len(at)})',
             line=dict(color=line_colors[i % len(line_colors)], width=1.5, shape='hv'),
             hovertemplate='t: %{x:.2f}<br>线路{i+1}: %{y}<extra></extra>'
         ))
@@ -657,8 +1163,8 @@ def render_tab_call_center(shift, n_lines, spam_ratio):
     sx_total, sy_total = make_step_xy(all_arrivals, T_shift)
     fig_cc1.add_trace(go.Scatter(
         x=sx_total, y=sy_total, mode='lines',
-        name=f'总进线 (nλ={total_lam}, 总来电={len(all_arrivals)})',
-        line=dict(color='#F44336', width=3, shape='hv'),
+        name=f'总进线 (n*lambda={total_lam}, 总来电={len(all_arrivals)})',
+        line=dict(color='#ef4444', width=3, shape='hv'),
         hovertemplate='t: %{x:.2f}<br>总进线: %{y}<extra></extra>'
     ))
 
@@ -674,10 +1180,9 @@ def render_tab_call_center(shift, n_lines, spam_ratio):
     fig_cc1.update_yaxes(showgrid=True, gridwidth=1, gridcolor='#f0f0f0')
     st.plotly_chart(fig_cc1, use_container_width=True)
 
-    # 验证叠加性
-    est_total_lam = len(all_arrivals) / T_shift
     col_v1, col_v2, col_v3 = st.columns(3)
-    col_v1.metric("理论总强度 nλ", f"{total_lam:.2f}/h")
+    col_v1.metric("理论总强度 n*lambda", f"{total_lam:.2f}/h")
+    est_total_lam = len(all_arrivals) / T_shift
     col_v2.metric("模拟总强度", f"{est_total_lam:.2f}/h")
     err = abs(est_total_lam - total_lam) / total_lam if total_lam > 0 else 0
     col_v3.markdown(
@@ -685,8 +1190,8 @@ def render_tab_call_center(shift, n_lines, spam_ratio):
         unsafe_allow_html=True
     )
 
-    # ── 来电过滤效果 ──
-    st.markdown("### 来电过滤效果（骚扰电话过滤）")
+    # ── 2. 来电过滤 ──
+    st.markdown("### 第二步：骚扰电话过滤（稀释性应用）")
 
     fig_cc2 = make_subplots(
         rows=2, cols=1, shared_xaxes=True,
@@ -700,14 +1205,14 @@ def render_tab_call_center(shift, n_lines, spam_ratio):
     ox, oy = make_step_xy(all_arrivals, T_shift)
     fig_cc2.add_trace(go.Scatter(
         x=ox, y=oy, mode='lines', name='总来电',
-        line=dict(color='#2196F3', width=2.2, shape='hv'),
+        line=dict(color='#3b82f6', width=2.2, shape='hv'),
         hovertemplate='t: %{x:.2f}<br>总数: %{y}<extra></extra>'
     ), row=1, col=1)
 
     vx, vy = make_step_xy(valid_arrivals, T_shift)
     fig_cc2.add_trace(go.Scatter(
         x=vx, y=vy, mode='lines', name='有效来电',
-        line=dict(color='#4CAF50', width=2.5, shape='hv'),
+        line=dict(color='#22c55e', width=2.5, shape='hv'),
         hovertemplate='t: %{x:.2f}<br>有效: %{y}<extra></extra>'
     ), row=2, col=1)
 
@@ -715,7 +1220,7 @@ def render_tab_call_center(shift, n_lines, spam_ratio):
         fig_cc2.add_trace(go.Scatter(
             x=valid_arrivals, y=list(range(1, len(valid_arrivals) + 1)),
             mode='markers',
-            marker=dict(size=5, color='#4CAF50', line=dict(width=0)),
+            marker=dict(size=5, color='#22c55e', line=dict(width=0)),
             name='有效来电事件',
             hovertemplate='有效来电: %{x:.3f}<br>#%{y}<extra></extra>'
         ), row=2, col=1)
@@ -729,7 +1234,7 @@ def render_tab_call_center(shift, n_lines, spam_ratio):
         fig_cc2.add_trace(go.Scatter(
             x=spam_arrivals, y=spam_y_vals,
             mode='markers',
-            marker=dict(size=6, color='#F44336', symbol='x', line=dict(width=1.2)),
+            marker=dict(size=6, color='#ef4444', symbol='x', line=dict(width=1.2)),
             name='骚扰电话',
             hovertemplate='骚扰: %{x:.3f}<extra></extra>'
         ), row=2, col=1)
@@ -747,26 +1252,208 @@ def render_tab_call_center(shift, n_lines, spam_ratio):
         fig_cc2.update_yaxes(showgrid=True, gridwidth=1, gridcolor='#f0f0f0', row=i, col=1)
     st.plotly_chart(fig_cc2, use_container_width=True)
 
-    # ── 运营指标 ──
-    st.markdown("### 运营指标计算")
-
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("每小时平均来电数", f"{len(all_arrivals) / T_shift:.2f}")
-    c2.metric(
-        "有效来电占比",
-        f"{len(valid_arrivals) / max(len(all_arrivals), 1):.1%}"
+    # ── 3. M/M/c 排队模拟 ──
+    st.markdown("### 第三步：M/M/c 排队系统模拟")
+    st.markdown(
+        "有效来电进入排队系统：顾客按泊松过程到达，若有空闲坐席则立即服务，"
+        "否则进入队列等待。服务时间服从指数分布 Exp(mu)。"
     )
-    c3.metric(
-        "平均到达间隔",
-        f"{T_shift / max(len(all_arrivals), 1):.2f} h" if len(all_arrivals) > 0 else "N/A"
-    )
-    c4.metric("有效 λ_eff", f"{effective_lam:.2f}/h")
 
-    # 验证稀释性
+    if len(valid_arrivals) > 0:
+        result = simulate_mmc_queue(effective_lam, mu_service, n_agents, T_shift)
+    else:
+        result = {
+            'arrivals': np.array([]), 'waits': np.array([]),
+            'queue_len_over_time': ([0, T_shift], [0, 0]),
+            'system_len_over_time': ([0, T_shift], [0, 0]),
+            'n_total': 0, 'n_served': 0, 'avg_wait': 0, 'max_queue': 0,
+        }
+
+    fig_queue = make_subplots(
+        rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1,
+        subplot_titles=('队列长度随时间变化', '系统中总人数随时间变化')
+    )
+
+    qt, qv = result['queue_len_over_time']
+    fig_queue.add_trace(go.Scatter(
+        x=qt, y=qv, mode='lines',
+        name='队列长度 (等待中)',
+        line=dict(color='#f59e0b', width=2),
+        fill='tozeroy', fillcolor='rgba(245,158,11,0.1)',
+        hovertemplate='t: %{x:.2f}<br>队列: %{y}<extra></extra>'
+    ), row=1, col=1)
+
+    st_t, sv = result['system_len_over_time']
+    fig_queue.add_trace(go.Scatter(
+        x=st_t, y=sv, mode='lines',
+        name=f'系统中总人数 (服务中+等待)',
+        line=dict(color='#3b82f6', width=2),
+        fill='tozeroy', fillcolor='rgba(59,130,246,0.1)',
+        hovertemplate='t: %{x:.2f}<br>总人数: %{y}<extra></extra>'
+    ), row=2, col=1)
+    fig_queue.add_hline(
+        y=n_agents, line_dash="dash", line_color="#ef4444",
+        annotation_text=f"坐席数={n_agents}", row=2, col=1
+    )
+
+    fig_queue.update_xaxes(title_text='时间 (小时)', row=2, col=1)
+    fig_queue.update_yaxes(title_text='队列长度', row=1, col=1)
+    fig_queue.update_yaxes(title_text='系统中人数', row=2, col=1)
+    fig_queue.update_layout(
+        height=550, template='plotly_white', hovermode='x unified',
+        title=dict(text=f"M/M/{n_agents} 排队系统状态 (lambda={effective_lam:.2f}, mu={mu_service})", font=dict(size=16)),
+        margin=dict(l=40, r=20, t=50, b=40),
+        showlegend=True,
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1)
+    )
+    st.plotly_chart(fig_queue, use_container_width=True)
+
+    # 等待时间分布
+    if len(result['waits']) > 0 and np.max(result['waits']) > 0:
+        fig_waits = go.Figure()
+        fig_waits.add_trace(go.Histogram(
+            x=result['waits'] * 60,
+            nbinsx=min(40, max(10, int(np.sqrt(len(result['waits']))))),
+            name='等待时间',
+            marker_color='#8b5cf6', opacity=0.7,
+            hovertemplate='等待: %{x:.1f} 分钟<br>频数: %{y}<extra></extra>'
+        ))
+        fig_waits.add_vline(
+            x=result['avg_wait'] * 60,
+            line_dash="dash", line_color="#ef4444",
+            annotation_text=f"平均: {result['avg_wait']*60:.1f} 分钟"
+        )
+        fig_waits.update_layout(
+            title=dict(text="顾客等待时间分布", font=dict(size=16)),
+            xaxis_title=dict(text='等待时间 (分钟)', font=dict(size=14)),
+            yaxis_title=dict(text='频数', font=dict(size=14)),
+            template='plotly_white', hovermode='x unified',
+            margin=dict(l=40, r=20, t=50, b=40)
+        )
+        fig_waits.update_xaxes(showgrid=True, gridwidth=1, gridcolor='#f0f0f0')
+        fig_waits.update_yaxes(showgrid=True, gridwidth=1, gridcolor='#f0f0f0')
+        st.plotly_chart(fig_waits, use_container_width=True)
+
+    # ── 4. Erlang C + 运营指标仪表盘 ──
+    st.markdown("### 第四步：运营指标与 Erlang C 分析")
+
+    p_wait_ec, lq_ec, wq_ec, rho_ec = erlang_c(effective_lam, mu_service, n_agents)
+
+    # 仪表盘
+    col_k1, col_k2, col_k3, col_k4, col_k5 = st.columns(5)
+    with col_k1:
+        delta = "目标 < 0.7" if rho_ec >= 0.85 else ("繁忙" if rho_ec >= 0.6 else "正常")
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-label">坐席利用率 rho</div>
+            <div class="metric-value">{rho_ec:.1%}</div>
+            <div class="metric-delta">{delta}</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with col_k2:
+        color_wait = "#16a34a" if p_wait_ec < 0.2 else ("#d97706" if p_wait_ec < 0.5 else "#dc2626")
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-label">等待概率 P(wait>0)</div>
+            <div class="metric-value" style="color:{color_wait}">{p_wait_ec:.1%}</div>
+            <div class="metric-delta">Erlang C 公式</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with col_k3:
+        avg_wait_min = wq_ec * 60 if wq_ec != float('inf') else float('inf')
+        w_str = f"{avg_wait_min:.1f} 分钟" if avg_wait_min != float('inf') else "inf"
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-label">平均等待时间 Wq</div>
+            <div class="metric-value">{w_str}</div>
+            <div class="metric-delta">Erlang C 理论值</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with col_k4:
+        lq_str = f"{lq_ec:.2f} 人" if lq_ec != float('inf') else "inf"
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-label">平均队列长度 Lq</div>
+            <div class="metric-value">{lq_str}</div>
+            <div class="metric-delta">利特尔定律 Lq=lambda*Wq</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with col_k5:
+        sim_wait = result['avg_wait'] * 60
+        w_sim_str = f"{sim_wait:.1f} 分钟"
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-label">模拟平均等待</div>
+            <div class="metric-value">{w_sim_str}</div>
+            <div class="metric-delta">离散事件模拟 ({result['n_total']} 顾客)</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("#### 模拟 vs Erlang C 对比")
+    r1, r2, r3, r4 = st.columns(4)
+    r1.metric("模拟到达数", f"{result['n_total']}", f"理论 lambda*T={effective_lam*T_shift:.1f}")
+    r2.metric("模拟平均等待", f"{result['avg_wait']*60:.2f} 分钟",
+              f"Erlang C: {avg_wait_min:.2f} 分钟" if avg_wait_min != float('inf') else "inf")
+    r3.metric("最大队列长度", f"{result['max_queue']}")
+    r4.metric("坐席配置", f"{n_agents} 人", f"rho={rho_ec:.1%}")
+
+    if rho_ec >= 1.0:
+        st.error(f"系统不稳定：rho={rho_ec:.2f} >= 1，到达率超过服务能力，队列将无限增长！请增加坐席数。")
+    elif rho_ec >= 0.85:
+        st.warning(f"系统高负载：rho={rho_ec:.2%}，顾客等待时间较长，建议考虑增加坐席。")
+    elif rho_ec >= 0.6:
+        st.info(f"系统负载适中：rho={rho_ec:.2%}，当前配置基本合理。")
+    else:
+        st.success(f"系统负载较低：rho={rho_ec:.2%}，坐席资源充足。")
+
+    # 推荐坐席数
+    st.markdown("#### 坐席数量推荐")
+    rec_col1, rec_col2 = st.columns(2)
+    with rec_col1:
+        min_c = max(1, int(np.floor(effective_lam / mu_service)) + 1)
+        recommendations = []
+        for c in range(min_c, min_c + 8):
+            pw, _, wq, rho_c = erlang_c(effective_lam, mu_service, c)
+            if rho_c >= 1.0:
+                continue
+            sl = 1 - pw * exp(-(c * mu_service - effective_lam) * 1.0)
+            recommendations.append((c, pw, wq * 60, rho_c, sl))
+            if pw < 0.05:
+                break
+
+        st.markdown("| 坐席数 c | 利用率 rho | 等待概率 | 平均等待 | 服务等级 SL(1min) |")
+        st.markdown("|:---:|:---:|:---:|:---:|:---:|")
+        for c, pw, wq_m, rho_c, sl in recommendations:
+            pw_str = f"<span style='color:{'#16a34a' if pw<0.1 else '#d97706' if pw<0.3 else '#dc2626'}'>{pw:.1%}</span>"
+            wq_str = f"{wq_m:.1f}min" if wq_m != float('inf') else "inf"
+            sl_str = f"<span style='color:{'#16a34a' if sl>0.8 else '#d97706' if sl>0.5 else '#dc2626'}'>{sl:.1%}</span>"
+            st.markdown(f"| {c} | {rho_c:.1%} | {pw_str} | {wq_str} | {sl_str} |", unsafe_allow_html=True)
+
+    with rec_col2:
+        if recommendations:
+            best = recommendations[-1]
+            st.markdown(f"""
+            <div class="conclusion-box">
+            <b>推荐配置</b><br>
+            当前有效到达率 lambda={effective_lam:.2f}/h，服务率 mu={mu_service}/h/坐席。<br><br>
+            <b>推荐坐席数：{best[0]} 人</b><br>
+            利用率：{best[3]:.1%}<br>
+            等待概率：{best[1]:.1%}<br>
+            平均等待：{best[2]:.1f} 分钟<br>
+            1分钟内接通率：{best[4]:.1%}<br>
+            </div>
+            """, unsafe_allow_html=True)
+        st.markdown("""
+        <div class="highlight-box">
+        <b>服务等级 (Service Level)</b> 定义为在目标时间内接通的来电比例。
+        行业标准通常要求 80% 的来电在 20 秒内接通。上表中 SL(1min) 表示 1分钟内的接通率。
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("#### 稀释性验证")
     est_eff_lam = len(valid_arrivals) / T_shift
-    st.markdown("**稀释性验证：**")
     cv1, cv2, cv3 = st.columns(3)
-    cv1.metric("理论有效强度 λ(1-s)", f"{effective_lam:.2f}/h")
+    cv1.metric("理论有效强度 lambda(1-s)", f"{effective_lam:.2f}/h")
     cv2.metric("模拟有效强度", f"{est_eff_lam:.2f}/h")
     err_eff = abs(est_eff_lam - effective_lam) / effective_lam if effective_lam > 0 else 0
     cv3.markdown(
@@ -774,22 +1461,115 @@ def render_tab_call_center(shift, n_lines, spam_ratio):
         unsafe_allow_html=True
     )
 
-    # ── 思考与结论 ──
     st.markdown(f"""
     <div class="conclusion-box">
-    <b>📝 问题思考与结论</b><br>
-    ① <b>排班优化：</b> {shift.split('(')[0]}理论来电强度为 {total_lam}/h，
-    有效来电强度为 {effective_lam:.2f}/h。
-    可根据有效来电强度合理配置坐席数，使服务率大于到达率，保证队列稳定。<br>
-    ② <b>叠加性应用：</b> {n_lines} 条独立线路的来电叠加为强度 {total_lam}/h 的总泊松过程，
+    <b>问题思考与结论</b><br>
+    ① <b>叠加性应用：</b> {n_lines} 条独立线路的来电叠加为强度 {total_lam}/h 的总泊松过程，
     验证了独立泊松流合并定理。<br>
-    ③ <b>稀释性应用：</b> 以 {1-spam_ratio:.0%} 比例过滤骚扰电话后，
-    有效来电仍为泊松过程（强度 {effective_lam:.2f}/h），
-    这简化了排队系统中有效服务需求的分析。<br>
-    ④ <b>资源配置价值：</b> 泊松过程理论可给出等待时间分布、溢出概率等关键指标，
-    为客服中心科学排班提供数学基础。
+    ② <b>稀释性应用：</b> 以 {1-spam_ratio:.0%} 比例过滤骚扰电话后，
+    有效来电仍为泊松过程（强度 {effective_lam:.2f}/h）。<br>
+    ③ <b>排队论应用（核心）：</b> M/M/{n_agents} 排队系统的 Erlang C 公式给出了
+    等待概率={p_wait_ec:.1%}、平均等待={avg_wait_min:.1f}min、利用率={rho_ec:.1%}。
+    当 rho>=1 时系统不稳定，需增加坐席。<br>
+    ④ <b>资源配置价值：</b> 泊松过程 + 排队论给出等待时间分布、溢出概率等关键指标，
+    为客服中心科学排班提供数学基础。优化目标是在服务等级和人员成本之间取得平衡。
     </div>
-    """)
+    """, unsafe_allow_html=True)
+
+
+# ============================================================
+# 标签页 5：总结
+# ============================================================
+
+def render_tab_summary():
+    st.markdown("## 总结与展望")
+
+    st.markdown("""
+    <div class="hero-container" style="padding: 36px 48px;">
+        <div style="font-size:1.5rem;font-weight:700;color:#93c5fd;position:relative;">从泊松过程到排队论</div>
+        <div style="font-size:0.95rem;color:#94a3b8;margin-top:8px;position:relative;line-height:1.7;">
+            我们完成了一次从数学定义出发、逐步深入实际应用的完整探索-
+            泊松过程不仅是一个优美的数学模型，更是理解和优化现实世界中随机服务系统的核心工具。
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    col_1, col_2 = st.columns(2)
+
+    with col_1:
+        st.markdown("""
+        <div class="theory-box">
+        <b>基本性质</b><br>
+        泊松过程 N(t) 是最基本的计数过程模型：<br>
+        - N(t) ~ Poisson(lambda*t)<br>
+        - 到达间隔 i.i.d. ~ Exp(lambda)<br>
+        - <b>无记忆性</b>：未来与过去无关<br>
+        - <b>平稳独立增量</b>：核心特征<br>
+        <b>验证手段</b>：KS 检验、R^2 拟合优度、无记忆性可视化
+        </div>
+        """, unsafe_allow_html=True)
+
+        st.markdown("""
+        <div class="theory-box">
+        <b>叠加性</b><br>
+        独立泊松过程之和仍为泊松过程：<br>
+        - lambda = lambda_1 + lambda_2<br>
+        - 多源输入的合并模型<br>
+        - 客服中心多条线路的总来电<br>
+        <b>验证手段</b>：三图对比、卡方拟合优度、间隔分布验证
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col_2:
+        st.markdown("""
+        <div class="theory-box">
+        <b>稀释性</b><br>
+        Bernoulli 随机筛选后仍为泊松过程：<br>
+        - lambda' = lambda * p<br>
+        - 每个事件独立保留/丢弃<br>
+        - 骚扰电话过滤模型<br>
+        <b>验证手段</b>：多 p 值对比、间隔分布验证、KS 检验
+        </div>
+        """, unsafe_allow_html=True)
+
+        st.markdown("""
+        <div class="conclusion-box">
+        <b>客服中心 M/M/c 排队</b><br>
+        泊松过程性质在排队论中的综合应用：<br>
+        - <b>叠加</b>：多线路来电合并<br>
+        - <b>稀释</b>：骚扰电话过滤<br>
+        - <b>Erlang C</b>：等待概率、平均队长<br>
+        - <b>资源配置</b>：科学确定坐席数<br>
+        <b>关键指标</b>：利用率 rho、等待概率 P(W>0)、服务等级 SL
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    st.markdown("""
+    <div class="highlight-box">
+    <b>探索延伸</b><br>
+    泊松过程的理论远不止于此，以下是值得进一步探索的方向：<br><br>
+    - <b>非齐次泊松过程</b>：强度 lambda(t) 随时间变化，可用于建模峰谷时段来电模式<br>
+    - <b>复合泊松过程</b>：每次跳跃大小随机，应用于保险精算中的总赔付额建模<br>
+    - <b>M/G/c 排队系统</b>：服务时间服从一般分布（非指数），更接近实际场景<br>
+    - <b>排队网络</b>：多个服务节点串联，如客服中心的 IVR -> 坐席 -> 主管升级流程<br>
+    - <b>机器学习结合</b>：利用历史数据估计 lambda(t)，实现动态排班优化
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    st.markdown("""
+    <div class="conclusion-box">
+    <b>核心收获</b><br>
+    通过这次探索，我们深刻体会到：<br>
+    ① 泊松过程的<b>公理化定义</b>看似简单，但蕴含了丰富的数学性质；<br>
+    ② <b>叠加性</b>和<b>稀释性</b>使泊松过程在工程建模中异常灵活-合并和筛选后"仍是自己"；<br>
+    ③ 概率论不是空中楼阁，<b>Erlang C 公式</b>到今天仍在全球客服中心的路由系统中运行；<br>
+    ④ 交互式可视化让我们<b>直观感受</b>随机过程的演化-模拟不是替代理论，而是验证和深化理解理论的最好方式。
+    </div>
+    """, unsafe_allow_html=True)
 
 
 # ============================================================
@@ -798,62 +1578,82 @@ def render_tab_call_center(shift, n_lines, spam_ratio):
 
 def main():
     st.title("泊松过程交互式可视化")
-    st.markdown("《概率论与随机过程》期中作业  |  基本性质 · 叠加性 · 稀释性 · 客服中心应用")
+    st.markdown("《概率论与随机过程》期中作业  |  基本性质 · 叠加性 · 稀释性 · 客服中心 M/M/c 排队系统")
 
-    # ── 侧边栏：所有参数控件 ──
+    # ── 侧边栏 ──
     with st.sidebar:
         st.header("控制面板")
-
-        with st.expander("📊 基本性质参数", expanded=True):
-            lam_basic = st.selectbox(
-                "强度 λ", [0.5, 1.0, 2.0, 5.0], index=1,
-                key="basic_lam"
-            )
-            T_basic = st.slider(
-                "时间范围 T", 10.0, 100.0, 50.0, 5.0,
-                key="basic_T"
-            )
-            n_basic = st.slider(
-                "样本量", 100, 10000, 1000, 100,
-                key="basic_n"
-            )
-            st.button("🔄 重新生成所有样本", key="basic_regenerate")
+        st.caption("欢迎！请先阅读首页了解探索路径。")
 
         st.markdown("---")
-
-        with st.expander("🔗 叠加性参数", expanded=False):
-            lam1_sup = st.slider("λ₁", 0.1, 5.0, 1.0, 0.1, key="sup_lam1")
-            lam2_sup = st.slider("λ₂", 0.1, 5.0, 1.5, 0.1, key="sup_lam2")
-            T_sup = st.slider("时间范围 T", 10.0, 100.0, 50.0, 5.0, key="sup_T")
-            st.button("🔄 生成叠加过程", key="sup_generate")
+        st.markdown("### 基本性质参数")
+        lam_basic = st.selectbox(
+            "强度 lambda", [0.5, 1.0, 2.0, 5.0], index=1,
+            key="basic_lam"
+        )
+        T_basic = st.slider(
+            "时间范围 T", 10.0, 100.0, 50.0, 5.0,
+            key="basic_T"
+        )
+        n_basic = st.slider(
+            "样本量", 100, 10000, 1000, 100,
+            key="basic_n"
+        )
+        st.button("重新生成所有样本", key="basic_regenerate")
 
         st.markdown("---")
-
-        with st.expander("🎯 稀释性参数", expanded=False):
-            lam_thin = st.slider("原始 λ", 0.1, 5.0, 2.0, 0.1, key="thin_lam")
-            p_thin = st.slider("稀释概率 p", 0.0, 1.0, 0.6, 0.05, key="thin_p")
-            T_thin = st.slider("时间范围 T", 10.0, 100.0, 50.0, 5.0, key="thin_T")
-            st.button("🔄 生成稀释过程", key="thin_generate")
+        st.markdown("### 叠加性参数")
+        lam1_sup = st.slider("lambda_1", 0.1, 5.0, 1.0, 0.1, key="sup_lam1")
+        lam2_sup = st.slider("lambda_2", 0.1, 5.0, 1.5, 0.1, key="sup_lam2")
+        T_sup = st.slider("时间范围 T", 10.0, 100.0, 50.0, 5.0, key="sup_T")
+        st.button("生成叠加过程", key="sup_generate")
 
         st.markdown("---")
+        st.markdown("### 稀释性参数")
+        lam_thin = st.slider("原始 lambda", 0.1, 5.0, 2.0, 0.1, key="thin_lam")
+        p_thin = st.slider("稀释概率 p", 0.0, 1.0, 0.6, 0.05, key="thin_p")
+        T_thin = st.slider("时间范围 T", 10.0, 100.0, 50.0, 5.0, key="thin_T")
+        st.button("生成稀释过程", key="thin_generate")
 
-        with st.expander("📞 客服中心参数", expanded=False):
-            shift_cc = st.selectbox(
-                "时段选择",
-                ['早班(9-12点, λ=2)', '午班(12-18点, λ=3.5)', '晚班(18-24点, λ=1.5)'],
-                index=1, key="cc_shift"
-            )
-            lines_cc = st.slider("客服线路数", 1, 5, 3, 1, key="cc_lines")
-            spam_cc = st.slider("骚扰电话比例", 0.0, 0.5, 0.2, 0.05, key="cc_spam")
-            st.button("🔄 开始模拟", key="cc_simulate")
+        st.markdown("---")
+        st.markdown("### 客服中心参数")
+        shift_cc = st.selectbox(
+            "时段选择",
+            ['早班(9-12点, lambda=2)', '午班(12-18点, lambda=3.5)', '晚班(18-24点, lambda=1.5)'],
+            index=1, key="cc_shift"
+        )
+        lines_cc = st.slider("客服线路数", 1, 5, 3, 1, key="cc_lines")
+        spam_cc = st.slider("骚扰电话比例", 0.0, 0.5, 0.2, 0.05, key="cc_spam")
+
+        st.markdown("---")
+        st.markdown("**M/M/c 排队参数**")
+        n_agents_cc = st.slider("坐席数 c", 1, 20, 4, 1, key="cc_agents")
+        mu_service_cc = st.slider(
+            "服务率 mu (/h/坐席)", 1.0, 15.0, 6.0, 0.5,
+            key="cc_mu",
+            help="每个坐席每小时可处理的来电数。mu=6 即平均每通电话处理 10 分钟。"
+        )
+        T_shift_override_cc = st.slider(
+            "模拟时长 (h)", 1.0, 12.0, 0.0, 0.5,
+            key="cc_T_override",
+            help="设为 0 则使用时段默认时长。"
+        )
+        T_shift_override_cc = T_shift_override_cc if T_shift_override_cc > 0 else None
+
+        st.button("开始模拟", key="cc_simulate")
 
     # ── 标签页 ──
-    tab1, tab2, tab3, tab4 = st.tabs([
-        "📊 基本性质",
-        "🔗 叠加性",
-        "🎯 稀释性",
-        "📞 客服中心应用"
+    tab0, tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "首页总览",
+        "基本性质",
+        "叠加性",
+        "稀释性",
+        "客服中心应用",
+        "总结与展望"
     ])
+
+    with tab0:
+        render_tab_home()
 
     with tab1:
         render_tab_basic(lam_basic, T_basic, n_basic)
@@ -865,31 +1665,11 @@ def main():
         render_tab_thinning(lam_thin, p_thin, T_thin)
 
     with tab4:
-        render_tab_call_center(shift_cc, lines_cc, spam_cc)
+        render_tab_call_center(shift_cc, lines_cc, spam_cc, n_agents_cc, mu_service_cc, T_shift_override_cc)
+
+    with tab5:
+        render_tab_summary()
 
 
 if __name__ == "__main__":
     main()
-
-
-# ═══════════════════════════════════════════════════════════
-# 运行与导出说明
-# ═══════════════════════════════════════════════════════════
-#
-# 安装依赖：
-#   pip install streamlit numpy plotly scipy pandas
-#
-# 运行命令：
-#   streamlit run app.py
-#
-# 导出 HTML（独立交互文件）：
-#   1. 运行 streamlit run app.py
-#   2. 浏览器中打开 http://localhost:8501
-#   3. 点击右上角 ⋮ → Print → 目标选择 "另存为 HTML"
-#   4. 保存后双击 .html 文件即可在浏览器中打开
-#      (Plotly 图表保持完整交互：缩放、平移、悬停提示等)
-#
-# 依赖版本：
-#   streamlit>=1.30.0, numpy>=1.24.0, plotly>=5.18.0,
-#   scipy>=1.11.0, pandas>=2.0.0
-# ═══════════════════════════════════════════════════════════
