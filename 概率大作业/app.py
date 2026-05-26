@@ -957,68 +957,71 @@ def render_tab_superposition(lam1, lam2, T_sup):
     st.markdown("### 叠加过程事件数分布验证")
     st.markdown("""
     <div class="highlight-box" style="font-size:0.85rem;">
-    <b>如何验证叠加后仍是泊松过程？</b> 点击下方按钮，系统将重复生成 500 次叠加过程，
+    <b>如何验证叠加后仍是泊松过程？</b> 系统自动重复生成 500 次叠加过程，
     统计事件数分布并与 Poisson((λ₁+λ₂)T) 的理论 PMF 对比。同时进行卡方拟合优度检验和间隔分布验证。<br>
     <b>三个层次</b>：① 事件数分布 → 卡方检验；② 间隔分布 → KS 检验；③ 间隔均值 → 是否接近 1/(λ₁+λ₂)。
     </div>
     """, unsafe_allow_html=True)
-    if st.button("分析叠加过程统计特性", key="sup_analyze_btn"):
-        n_sup_runs = 500
-        sup_counts = []
-        for _ in range(n_sup_runs):
-            a1, _ = generate_poisson_process(lam1, T_sup)
-            a2, _ = generate_poisson_process(lam2, T_sup)
-            sup_counts.append(len(a1) + len(a2))
-        sup_counts = np.array(sup_counts)
+    n_sup_runs = 500
+    sup_counts = []
+    for _ in range(n_sup_runs):
+        a1, _ = generate_poisson_process(lam1, T_sup)
+        a2, _ = generate_poisson_process(lam2, T_sup)
+        sup_counts.append(len(a1) + len(a2))
+    sup_counts = np.array(sup_counts)
 
-        theory_lam = lam1 + lam2
-        max_k = max(int(theory_lam * T_sup * 2), np.max(sup_counts), 10)
-        k_range = np.arange(0, max_k + 1)
+    theory_lam = lam1 + lam2
+    max_k = max(int(theory_lam * T_sup * 2), np.max(sup_counts), 10)
+    k_range = np.arange(0, max_k + 1)
 
-        hist_sup = np.bincount(sup_counts, minlength=max_k + 1)[:max_k + 1] / n_sup_runs
-        pmf_theory = stats.poisson.pmf(k_range, theory_lam * T_sup)
+    hist_sup = np.bincount(sup_counts, minlength=max_k + 1)[:max_k + 1] / n_sup_runs
+    pmf_theory = stats.poisson.pmf(k_range, theory_lam * T_sup)
 
-        fig_sup_dist = go.Figure()
-        fig_sup_dist.add_trace(go.Bar(
-            x=k_range, y=hist_sup,
-            name=f'模拟 (n={n_sup_runs})',
-            marker_color='#3b82f6', opacity=0.65,
-            hovertemplate='k: %{x}<br>频率: %{y:.4f}<extra></extra>'
-        ))
-        fig_sup_dist.add_trace(go.Scatter(
-            x=k_range, y=pmf_theory, mode='markers+lines',
-            name=f'理论 Poisson({theory_lam*T_sup:.1f})',
-            marker=dict(color='#ef4444', size=6), line=dict(color='#ef4444', width=2, dash='dash'),
-            hovertemplate='k: %{x}<br>P: %{y:.4f}<extra></extra>'
-        ))
-        fig_sup_dist.update_layout(
-            title=dict(text=f"叠加过程事件数分布 vs Poisson({theory_lam*T_sup:.1f})", font=dict(size=16)),
-            xaxis_title=dict(text='事件数 k', font=dict(size=14)),
-            yaxis_title=dict(text='概率 / 频率', font=dict(size=14)),
-            template='simple_white', hovermode='x unified',
-            legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
-            margin=dict(l=40, r=20, t=50, b=40), bargap=0.15
+    fig_sup_dist = go.Figure()
+    fig_sup_dist.add_trace(go.Bar(
+        x=k_range, y=hist_sup,
+        name=f'模拟 (n={n_sup_runs})',
+        marker_color='#3b82f6', opacity=0.65,
+        hovertemplate='k: %{x}<br>频率: %{y:.4f}<extra></extra>'
+    ))
+    fig_sup_dist.add_trace(go.Scatter(
+        x=k_range, y=pmf_theory, mode='markers+lines',
+        name=f'理论 Poisson({theory_lam*T_sup:.1f})',
+        marker=dict(color='#ef4444', size=6), line=dict(color='#ef4444', width=2, dash='dash'),
+        hovertemplate='k: %{x}<br>P: %{y:.4f}<extra></extra>'
+    ))
+    fig_sup_dist.update_layout(
+        title=dict(text=f"叠加过程事件数分布 vs Poisson({theory_lam*T_sup:.1f})", font=dict(size=16)),
+        xaxis_title=dict(text='事件数 k', font=dict(size=14)),
+        yaxis_title=dict(text='概率 / 频率', font=dict(size=14)),
+        template='simple_white', hovermode='x unified',
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
+        margin=dict(l=40, r=20, t=50, b=40), bargap=0.15
+    )
+    st.plotly_chart(fig_sup_dist, use_container_width=True)
+
+    # 卡方拟合优度
+    obs_full = np.bincount(sup_counts, minlength=len(k_range))[:len(k_range)]
+    exp_full = pmf_theory * n_sup_runs
+    mask = exp_full >= 5
+    obs_filt = obs_full[mask].astype(float)
+    exp_filt = exp_full[mask]
+    if len(obs_filt) >= 3:
+        scale = obs_filt.sum() / exp_filt.sum()
+        exp_filt = exp_filt * scale
+        chi2, p_chi2 = stats.chisquare(obs_filt, exp_filt)
+        st.markdown(f"**卡方拟合优度检验**: chi^2={chi2:.2f}, p={p_chi2:.4f}")
+
+    super_ia = np.diff(arrivals_super)
+    if len(super_ia) >= 5:
+        fig_sia, r2_s = plot_interarrival_histogram(
+            super_ia, lam1 + lam2,
+            title=f"叠加过程间隔分布 (理论 Exp(lambda={lam1+lam2}))"
         )
-        st.plotly_chart(fig_sup_dist, use_container_width=True)
-
-        # 卡方拟合优度
-        valid_k = np.bincount(sup_counts)
-        valid_k = valid_k[valid_k > 0]
-        if len(valid_k) >= 3 and len(valid_k) <= len(pmf_theory):
-            chi2, p_chi2 = stats.chisquare(valid_k, pmf_theory[:len(valid_k)] * n_sup_runs)
-            if chi2 is not None:
-                st.markdown(f"**卡方拟合优度检验**: chi^2={chi2:.2f}, p={p_chi2:.4f}")
-
-        super_ia = np.diff(arrivals_super)
-        if len(super_ia) >= 5:
-            fig_sia, r2_s = plot_interarrival_histogram(
-                super_ia, lam1 + lam2,
-                title=f"叠加过程间隔分布 (理论 Exp(lambda={lam1+lam2}))"
-            )
-            if fig_sia is not None:
-                st.plotly_chart(fig_sia, use_container_width=True)
-            html_err, _ = format_error_html(np.mean(super_ia), 1.0 / (lam1 + lam2))
-            st.markdown(f"叠加间隔均值: {html_err}", unsafe_allow_html=True)
+        if fig_sia is not None:
+            st.plotly_chart(fig_sia, use_container_width=True)
+        html_err, _ = format_error_html(np.mean(super_ia), 1.0 / (lam1 + lam2))
+        st.markdown(f"叠加间隔均值: {html_err}", unsafe_allow_html=True)
 
     st.markdown(f"""
     <div class="conclusion-box">
@@ -1153,82 +1156,80 @@ def render_tab_thinning(lam, p, T_thin):
     理论预测应为线性关系：平均事件数 = λpT（即与 p 成正比）。条形图越接近红色折线，稀释定理验证越成功。
     </div>
     """, unsafe_allow_html=True)
-    if st.button("生成多 p 值对比", key="thin_multip_btn"):
-        p_values = [0.2, 0.4, 0.6, 0.8]
-        n_multi = 200
-        fig_multi = go.Figure()
-        p_results = []
+    p_values = [0.2, 0.4, 0.6, 0.8]
+    n_multi = 200
+    fig_multi = go.Figure()
+    p_results = []
 
-        for p_i in p_values:
-            retained_counts = []
-            for _ in range(n_multi):
-                at_full, _ = generate_poisson_process(lam, T_thin)
-                retained_counts.append(np.sum(np.random.random(len(at_full)) < p_i))
-            avg_retained = np.mean(retained_counts)
-            theory_val = lam * p_i * T_thin
-            p_results.append((p_i, avg_retained, theory_val))
+    for p_i in p_values:
+        retained_counts = []
+        for _ in range(n_multi):
+            at_full, _ = generate_poisson_process(lam, T_thin)
+            retained_counts.append(np.sum(np.random.random(len(at_full)) < p_i))
+        avg_retained = np.mean(retained_counts)
+        theory_val = lam * p_i * T_thin
+        p_results.append((p_i, avg_retained, theory_val))
 
-        p_vals = [r[0] for r in p_results]
-        sim_vals = [r[1] for r in p_results]
-        theory_vals = [r[2] for r in p_results]
+    p_vals = [r[0] for r in p_results]
+    sim_vals = [r[1] for r in p_results]
+    theory_vals = [r[2] for r in p_results]
 
-        fig_multi.add_trace(go.Bar(
-            x=p_vals, y=sim_vals, name='模拟值 (200次平均)',
-            marker_color='#3b82f6', opacity=0.7,
-            text=[f'{v:.2f}' for v in sim_vals], textposition='outside',
-            hovertemplate='p: %{x}<br>模拟事件数: %{y:.2f}<extra></extra>'
-        ))
-        fig_multi.add_trace(go.Scatter(
-            x=p_vals, y=theory_vals, mode='markers+lines',
-            name='理论值 lambda*p*T',
-            marker=dict(color='#ef4444', size=10), line=dict(color='#ef4444', width=2, dash='dash'),
-            hovertemplate='p: %{x}<br>理论事件数: %{y:.1f}<extra></extra>'
-        ))
-        fig_multi.update_layout(
-            title=dict(text=f"不同 p 值下稀释后事件数 (lambda={lam}, T={T_thin})", font=dict(size=16)),
-            xaxis_title=dict(text='稀释概率 p', font=dict(size=14)),
-            yaxis_title=dict(text='平均事件数', font=dict(size=14)),
-            template='simple_white', hovermode='x unified',
-            legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
-            margin=dict(l=40, r=20, t=50, b=40)
+    fig_multi.add_trace(go.Bar(
+        x=p_vals, y=sim_vals, name='模拟值 (200次平均)',
+        marker_color='#3b82f6', opacity=0.7,
+        text=[f'{v:.2f}' for v in sim_vals], textposition='outside',
+        hovertemplate='p: %{x}<br>模拟事件数: %{y:.2f}<extra></extra>'
+    ))
+    fig_multi.add_trace(go.Scatter(
+        x=p_vals, y=theory_vals, mode='markers+lines',
+        name='理论值 lambda*p*T',
+        marker=dict(color='#ef4444', size=10), line=dict(color='#ef4444', width=2, dash='dash'),
+        hovertemplate='p: %{x}<br>理论事件数: %{y:.1f}<extra></extra>'
+    ))
+    fig_multi.update_layout(
+        title=dict(text=f"不同 p 值下稀释后事件数 (lambda={lam}, T={T_thin})", font=dict(size=16)),
+        xaxis_title=dict(text='稀释概率 p', font=dict(size=14)),
+        yaxis_title=dict(text='平均事件数', font=dict(size=14)),
+        template='simple_white', hovermode='x unified',
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
+        margin=dict(l=40, r=20, t=50, b=40)
+    )
+    st.plotly_chart(fig_multi, use_container_width=True)
+
+    for p_i, sim_v, theory_v in p_results:
+        _, rel = format_error_html(sim_v, theory_v)
+        color_cls = get_error_color(rel)[1]
+        st.markdown(
+            f"p={p_i}：模拟 {sim_v:.2f} vs 理论 {theory_v:.2f}，"
+            f"误差 <span class='{color_cls}'>{rel:.2%}</span>",
+            unsafe_allow_html=True
         )
-        st.plotly_chart(fig_multi, use_container_width=True)
-
-        for p_i, sim_v, theory_v in p_results:
-            _, rel = format_error_html(sim_v, theory_v)
-            color_cls = get_error_color(rel)[1]
-            st.markdown(
-                f"p={p_i}：模拟 {sim_v:.2f} vs 理论 {theory_v:.2f}，"
-                f"误差 <span class='{color_cls}'>{rel:.2%}</span>",
-                unsafe_allow_html=True
-            )
 
     st.markdown("### 稀释过程间隔分布验证")
     st.markdown("""
     <div class="highlight-box" style="font-size:0.85rem;">
     <b>核心检验：</b> 如果稀释后"仍为泊松过程"，则保留事件的间隔时间应服从 Exp(λp)。
-    点击下方按钮，生成间隔直方图并与理论指数分布对比。同时进行 KS 检验——p >= 0.05 则验证成功。
+    下方自动生成间隔直方图并与理论指数分布对比。同时进行 KS 检验——p >= 0.05 则验证成功。
     </div>
     """, unsafe_allow_html=True)
-    if st.button("分析稀释过程间隔分布", key="thin_analyze_btn"):
-        if len(retained) >= 5:
-            thin_ia = np.diff(retained)
-            fig_tia, r2_t = plot_interarrival_histogram(
-                thin_ia, lam * p,
-                title=f"稀释后间隔分布 (理论 Exp(lambda*p={lam*p:.2f}))"
-            )
-            if fig_tia is not None:
-                st.plotly_chart(fig_tia, use_container_width=True)
-            html_err, _ = format_error_html(np.mean(thin_ia), 1.0 / (lam * p))
-            st.markdown(f"稀释间隔均值: {html_err}", unsafe_allow_html=True)
-            if r2_t is not None:
-                st.markdown(f"**拟合优度 R^2** = {r2_t:.4f}")
+    if len(retained) >= 5:
+        thin_ia = np.diff(retained)
+        fig_tia, r2_t = plot_interarrival_histogram(
+            thin_ia, lam * p,
+            title=f"稀释后间隔分布 (理论 Exp(lambda*p={lam*p:.2f}))"
+        )
+        if fig_tia is not None:
+            st.plotly_chart(fig_tia, use_container_width=True)
+        html_err, _ = format_error_html(np.mean(thin_ia), 1.0 / (lam * p))
+        st.markdown(f"稀释间隔均值: {html_err}", unsafe_allow_html=True)
+        if r2_t is not None:
+            st.markdown(f"**拟合优度 R^2** = {r2_t:.4f}")
 
-            d_stat, p_val, ks_conc = ks_test_exponential(thin_ia, lam * p)
-            if d_stat is not None:
-                st.markdown(f"**KS 检验**: D={d_stat:.4f}, {ks_conc}", unsafe_allow_html=True)
-        else:
-            st.warning("保留事件数过少，请增大 p 或 lambda。")
+        d_stat, p_val, ks_conc = ks_test_exponential(thin_ia, lam * p)
+        if d_stat is not None:
+            st.markdown(f"**KS 检验**: D={d_stat:.4f}, {ks_conc}", unsafe_allow_html=True)
+    else:
+        st.warning("保留事件数过少，请增大 p 或 lambda。")
 
     st.markdown(f"""
     <div class="conclusion-box">
